@@ -206,6 +206,10 @@ Restore(EnabledByThisRun=false)  restored=True  stillEncrypted=True（既有加�
 | B. 目标已存在（预付造目录 + 标记文件） | **exit 1**，目录与标记文件原封不动（不再递归删除） |
 | C. `-KeepWork` 保留的现场，后续运行 | 保留目录与其标记文件均未被删除 |
 | D. 父目录是 junction 且指向仓外 | **exit 1**（`ABORT 父目录解析后的真实路径不在工作区内`），仓外目录里没有创建任何东西 |
+| E. 显式 `-Scratch` 的父目录不存在 | **exit 1**（`ABORT 显式 -Scratch 的父目录不存在，脚本不代建`），父目录未被创建 |
+| F. 显式 `-Scratch` 的父目录存在且在仓内 | **exit 0**，`ok 目标父目录（真实路径）位于工作区内`，跑完目录已删 |
+
+E/F 是“显式 `-Scratch` 不得代建父目录”这条修正的专项回归；清理后 `tests\.work` 残留 0。
 
 ### 真机跑出来的两个 bug（已修 + 已加回归）
 

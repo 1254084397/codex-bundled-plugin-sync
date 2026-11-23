@@ -58,7 +58,14 @@ try {
     # ---- 边界检查（路径词法 + 解析后真实路径双重校验）------------------
     $resolvedScratch = [System.IO.Path]::GetFullPath($Scratch)
     $parent = Split-Path -Parent $resolvedScratch
-    if (-not (Test-Path -LiteralPath $parent)) {
+    if ($explicitScratch) {
+        # 调用方显式给的路径：父目录必须已存在，脚本不为外部路径创建任何目录。
+        if (-not (Test-Path -LiteralPath $parent)) {
+            Write-Host "  ABORT 显式 -Scratch 的父目录不存在，脚本不代建：$parent" -ForegroundColor Red
+            exit 1
+        }
+    } elseif (-not (Test-Path -LiteralPath $parent)) {
+        # 只有默认路径才允许创建我们自己的 tests\.work。
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
     }
     $parentFinal = Resolve-CodexSyncFinalPath -Path $parent
