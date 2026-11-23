@@ -75,6 +75,12 @@ namespace CodexPluginSync.Core
         [DataMember(Name = "livePath")]
         public string LivePath;
 
+        [DataMember(Name = "backupPath")]
+        public string BackupPath;
+
+        [DataMember(Name = "existedBefore")]
+        public bool ExistedBefore;
+
         [DataMember(Name = "swappedOut")]
         public bool SwappedOut;
 

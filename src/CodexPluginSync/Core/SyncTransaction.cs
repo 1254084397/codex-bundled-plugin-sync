@@ -104,6 +104,8 @@ namespace CodexPluginSync.Core
                 entry.Component = target.Component;
                 entry.LivePath = target.LivePath;
                 entry.StagePath = target.StagePath;
+                entry.BackupPath = target.BackupPath;
+                entry.ExistedBefore = target.ExistedBefore;
                 journal.Targets.Add(entry);
             }
 
@@ -167,6 +169,9 @@ namespace CodexPluginSync.Core
                     }
                     manifest.Components[i].PreviousDigest = target.OldDigest;
                     manifest.Components[i].Digest = target.NewDigest;
+                    // §6.6：恢复只读 journal，所以摘要必须在第一次动 live 之前就落盘
+                    journal.Targets[i].OldDigest = target.OldDigest;
+                    journal.Targets[i].NewDigest = target.NewDigest;
                 }
                 BackupManifestStore.Write(backupDirectory, manifest);
                 journal.Phase = JournalPhases.Verified;

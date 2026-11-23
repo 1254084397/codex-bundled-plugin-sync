@@ -77,17 +77,21 @@ namespace CodexPluginSync.Core
                 string codexHome = CodexPaths.ResolveCodexHome(options.CodexHome ?? settings.CodexHome);
                 paths = new CodexPaths(codexHome);
 
-                // 0) 上次操作没写完就不猜：只报事实，不动任何文件 ------------------
-                JournalDto pending = JournalStore.Read(paths);
-                if (pending != null)
+                // 0) §6.6：上次没写完的操作先按矩阵收尾；收不干净就停在这里 --------
+                RecoveryOutcome recovery = RecoveryRunner.Run(paths, output);
+                if (recovery.NeedsAttention)
                 {
                     result.Status = SyncTransaction.StatusNeedsAttention;
                     result.ExitCode = ExitCodesLocator.NeedsAttention;
-                    result.Message = "存在未收尾的操作（phase=" + pending.Phase + "），本次未写入任何内容。";
+                    result.Message = "存在无法自动判定的遗留状态，本次未写入任何内容：" + recovery.Message;
                     output.WriteLine(result.Message);
-                    output.WriteLine("待处理操作：" + pending.OperationId + "，目标 " +
-                        (pending.Targets == null ? 0 : pending.Targets.Count) + " 个；journal：" + paths.JournalPath);
+                    for (int i = 0; i < recovery.Rows.Count; i++) { output.WriteLine("  " + recovery.Rows[i]); }
+                    output.WriteLine("journal 与快照已保留作为现场：" + paths.JournalPath);
                     return result;
+                }
+                for (int i = 0; i < recovery.Actions.Count; i++)
+                {
+                    result.Lines.Add("恢复：" + recovery.Actions[i]);
                 }
 
                 // 1) 选备份 -------------------------------------------------------

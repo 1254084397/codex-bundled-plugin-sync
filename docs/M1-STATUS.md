@@ -27,11 +27,12 @@
 | **§7.3 回滚（C#）** | `Core/RollbackEngine.cs` | 按 `createdUtc` 选最新 `status=complete`（或 `--backup <id>`）；非 complete 直接拒；动 live 前校验 `previousDigest`；安全快照写完并校验通过才动 live；先写满 `journal.targets` 再进 `rollback-commit-started`；失败退回安全快照、退不干净 → needs-attention 并保留 journal 与两份快照；遗留 journal 直接阻停（不猜）。`rollback/restore` 12 条 + `rollback/roundtrip` 8 条 + `rollback/guards` 11 条断言 |
 | **§7.4 清理（C#）** | `Core/CleanupEngine.cs` | 身份一律读 `backup.json` 的 kind/status（legacy 才回退前缀）；`keepBackups` 只数 complete；`partial`/`verify-failed` 按天数；`kind=rollback-safety` 只留最新 1 个；空备份目录直删；stage 只删“超过 `staleStageHours` 且不被 journal 引用”；日志按 `keepLogDays`，最近 1 小时写过的不删；删除前做路径边界检查，reparse point 只删链接不递归。`--dry-run` 只出计划。`cleanup/retention` 18 条断言 |
 | **§7.5 诊断导出 + 脱敏（C#）** | `Core/DiagExporter.cs`（含 `Redactor`） | 单 zip：`state.json`/`backups.json`/`settings.json`/`native-host.txt`/`environment.txt`/最近 5 个日志/`manifest.json`/`README.txt`；默认脱敏（用户名、计算机名、用户目录链、SID、临时目录），保留盘符；`--no-redact` 需显式传参且在 `manifest.json` 如实标记；不收集 token/密钥/cookie/插件文件/AppX/对话数据。`diag/redaction` 8 条断言 |
+| **§6.6 崩溃恢复执行（C#）** | `Core/RecoveryRunner.cs`（+ `RecoveryMatrix`） | `--sync` / `--rollback` 开头先跑一次：判定只看 live/backup/stage(safety) 的存在性 + 树摘要（不依赖 journal 的 `swapped` 位）；执行前先做终态一致性预检，不一致时一个动作都不执行；每组件只允许矩阵那一行的唯一动作（`none`/`delete-stage`/`complete-swap`/`restore-backup`/`restore-safety`/`revert-new`/`delete-live`/`attention`）；全部落地才删 journal，否则写 `needs-attention` 并保留现场。journal 目标新增 `backupPath`/`existingBefore`/`oldDigest`/`newDigest`（恢复只读 journal）。`recovery/execute` 13 条断言（行 4/6/9 + 终态不一致） |
 
 ## 实测结果（本机）
 
 ```text
---selftest                      → SELFTEST PASS (23 cases)   ← 2026-11-24 构建后实测
+--selftest                      → SELFTEST PASS (24 cases)   ← 2026-11-24 构建后实测
 --check（真机）                  → Verdict: ok, Update needed: No, exit 0
 --check --json（stderr 丢弃）     → 单行 JSON 可解析，exitCode=2 时与进程退出码一致
 --cleanup-only --dry-run（真机）  → 清理计划 114 项，exit 0，未删除任何内容
@@ -61,7 +62,7 @@ C# 侧已接管全部写入命令 `--sync`、`--rollback`、`--cleanup-only`、`
 
 | 缺口 | 归属 | 依据 |
 | --- | --- | --- |
-| 崩溃后的自动恢复执行（`--check` 目前只报告 phase，`--rollback`/`--sync` 遇遗留 journal 直接阻停，不跑矩阵动作） | M1 增量 4 | §6.6 |
+| 崩溃后自动执行恢复矩阵的**真机**验证（逻辑已在 fixture 上覆盖 `recovery/execute`，但没在真机崩溃现场用） | M1 增量 4 | §6.6 |
 | native host 回滚的“注册表值原本不存在 → 删键”分支（sync 不会建键，故未实现；脚本层已覆盖） | 同上 | §9.4 |
 | WinForms 界面、托盘 | M3 / M4 | §11、§12 |
 | `.cmd` 兼容映射（2→0） | M2 | §2.4 |

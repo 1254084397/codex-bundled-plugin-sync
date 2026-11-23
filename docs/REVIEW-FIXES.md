@@ -228,11 +228,12 @@ E/F 是“显式 `-Scratch` 不得代建父目录”这条修正的专项回归�
 - **D-01**（marketplace 父目录是否该长期加密）仍待结论；当前实现只撤销本次自己的开启。
 - **Codex 是否会自己重建 `chrome\latest`**：同步后新缓存来自 AppX 源包（不含该 junction），
   下次启动 Codex Desktop 时需确认它是否重建别名（目前清单指向版本目录，不依赖别名）。
-- C# 侧（`src/CodexPluginSync`）已接管全部命令：`--check`、`--sync`（组件集合、stage、七阶段事务、§9.4 native host、§8 EFS）、
-  `--rollback`（§7.3）、`--cleanup-only`（§7.4）、`--export-diag`（§7.5，含 `Redactor`）与 `--selftest`
-  （**23 cases**，2026-11-24 实测：`SELFTEST PASS (23 cases)`）。
-  仍未做：崩溃后自动执行恢复矩阵（当前是“遇遗留 journal 直接阻停并在 `--check` 里报 phase”）、
-  native host 回滚的“删键”分支（见 `docs/M1-STATUS.md` 的“未实现”表）。
+- C# 侧（`src/CodexPluginSync`）已接管全部命令：`--check`、`--sync`、`--rollback`、`--cleanup-only`、`--export-diag`
+  与 `--selftest`（**24 cases**，2026-11-24 实测：`SELFTEST PASS (24 cases)`），
+  并包含 §6.6 恢复矩阵的**执行侧**（`Core/RecoveryRunner.cs`：`--sync`/`--rollback` 开头先收尾上次操作）。
+  仍未做：native host 回滚的“删键”分支（sync 从不建键）、M3 界面/托盘。
+- 恢复执行与真机崩溃现场：矩阵逻辑在 fixture 上覆盖了行 4/6/9 与终态不一致（`recovery/execute`），
+  但**未经真机崩溃演练**（强杀进程后重启恢复）。不得因为 fixture 全绿就当作真机已验证。
 - 回滚与清理的**真机写入**验收尚未做：C# 侧只在临时目录与 fixture 上验证过
   （`rollback/restore`、`rollback/roundtrip`、`rollback/guards`、`cleanup/retention`）；
   真机上只跑了 `--cleanup-only --dry-run`（114 项计划，未删任何东西）。脚本层的真机演练见 §8，两者不能互相代替。

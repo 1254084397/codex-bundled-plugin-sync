@@ -54,9 +54,28 @@ namespace CodexPluginSync.Core
                 string codexHome = CodexPaths.ResolveCodexHome(options.CodexHome ?? settings.CodexHome);
                 CodexPaths paths = new CodexPaths(codexHome);
 
+                // §6.6：上次没写完的操作先按矩阵收尾；收不干净就停在这里。---------------
+                RecoveryOutcome recovery = RecoveryRunner.Run(paths, output);
+                if (recovery.NeedsAttention)
+                {
+                    result.Status = SyncTransaction.StatusNeedsAttention;
+                    result.ExitCode = ExitCodesLocator.NeedsAttention;
+                    result.Message = "上次操作遗留状态无法自动判定，本次未写入任何内容：" + recovery.Message;
+                    output.WriteLine(result.Message);
+                    for (int i = 0; i < recovery.Rows.Count; i++) { output.WriteLine("  " + recovery.Rows[i]); }
+                    return result;
+                }
+                if (recovery.Actions.Count > 0)
+                {
+                    result.Lines.Add("恢复：" + recovery.Message);
+                    for (int i = 0; i < recovery.Actions.Count; i++)
+                    {
+                        result.Lines.Add("恢复：" + recovery.Actions[i]);
+                    }
+                }
+
                 string sourceBundle = options.SourceBundleOverride;
-                string appxVersion = "override";
-                if (string.IsNullOrEmpty(sourceBundle))
+                string appxVersion = "override";                if (string.IsNullOrEmpty(sourceBundle))
                 {
                     DesktopPackage package = AppxLocator.Locate();
                     if (!package.Found)

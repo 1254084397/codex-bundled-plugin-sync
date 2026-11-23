@@ -194,6 +194,7 @@ namespace CodexPluginSync.Tests
                 RollbackRoundTripCase(context, baseDirectory);
                 RollbackGuardsCase(context, baseDirectory);
                 CleanupRetentionCase(context, baseDirectory);
+                RecoveryExecuteCase(context, baseDirectory);
                 DiagRedactionCase(context, baseDirectory);
                 ArgumentParsingCase(context);
             }
@@ -1255,6 +1256,139 @@ namespace CodexPluginSync.Tests
             {
                 try { Directory.Delete(root, true); } catch (Exception) { }
             }
+        }
+
+        /// <summary>
+        /// §6.6 恢复执行侧：判定只看“存在性 + 摘要”，不依赖 journal 的 swapped 位。
+        /// 行 4 前滚、行 6 清 stage、行 9 转 attention、终态不一致时一个动作也不执行。
+        /// </summary>
+        private static void RecoveryExecuteCase(TestContext context, string baseDirectory)
+        {
+            context.Begin("recovery/execute");
+
+            string root = Path.Combine(baseDirectory, "recovery-execute");
+            try
+            {
+                // A) 行 4：live 缺失、备份是旧内容、stage 完整 → 前滚
+                CodexPaths paths = new CodexPaths(Path.Combine(root, "a"));
+                string liveA = paths.MarketBundle;
+                string backupA = Path.Combine(paths.BackupsRoot, "openai-bundled-sync-a", "marketplace.previous");
+                string stageA = Path.Combine(paths.MarketParent, "openai-bundled.stage-a");
+                WriteTree(backupA, "old.txt", "old");
+                WriteTree(stageA, "new.txt", "new");
+                WriteJournal(paths, "sync", liveA, backupA, stageA, null, TreeDigest.Compute(backupA),
+                    TreeDigest.Compute(stageA), true);
+
+                RecoveryOutcome a = RecoveryRunner.Run(paths, TextWriter.Null);
+                context.Expect(a.Recovered && !a.NeedsAttention, "行 4 可自动前滚", a.Message + " || " + string.Join(" | ", a.Rows.ToArray()));
+                context.Expect(File.Exists(Path.Combine(liveA, "new.txt")), "行 4 前滚后 live 是 stage 内容", liveA);
+                context.Expect(!Directory.Exists(stageA), "行 4 前滚后 stage 已移走", stageA);
+                context.Expect(!File.Exists(paths.JournalPath), "行 4 成功后 journal 已删", paths.JournalPath);
+
+                // B) 行 6：live 已是新内容、备份是旧内容、还有残留 stage → 只清 stage
+                CodexPaths pathsB = new CodexPaths(Path.Combine(root, "b"));
+                string liveB = pathsB.MarketBundle;
+                string backupB = Path.Combine(pathsB.BackupsRoot, "openai-bundled-sync-b", "marketplace.previous");
+                string stageB = Path.Combine(pathsB.MarketParent, "openai-bundled.stage-b");
+                WriteTree(backupB, "old.txt", "old");
+                WriteTree(liveB, "new.txt", "new");
+                WriteTree(stageB, "new.txt", "new");
+                WriteJournal(pathsB, "sync", liveB, backupB, stageB, null, TreeDigest.Compute(backupB),
+                    TreeDigest.Compute(liveB), true);
+
+                RecoveryOutcome b = RecoveryRunner.Run(pathsB, TextWriter.Null);
+                context.Expect(b.Recovered && !b.NeedsAttention, "行 6 可自动收尾", b.Message + " || " + string.Join(" | ", b.Rows.ToArray()));
+                context.Expect(File.Exists(Path.Combine(liveB, "new.txt")), "行 6 不动已提交的 live", liveB);
+                context.Expect(!Directory.Exists(stageB), "行 6 删除残留 stage", stageB);
+                context.Expect(!File.Exists(pathsB.JournalPath), "行 6 成功后 journal 已删", pathsB.JournalPath);
+
+                // C) 行 9：三份都不存在 → 不得自动处理，journal 必须保留
+                CodexPaths pathsC = new CodexPaths(Path.Combine(root, "c"));
+                string liveC = pathsC.MarketBundle;
+                Directory.CreateDirectory(pathsC.MarketParent);
+                WriteJournal(pathsC, "sync", liveC, Path.Combine(pathsC.BackupsRoot, "b", "marketplace.previous"),
+                    Path.Combine(pathsC.MarketParent, "openai-bundled.stage-c"), null,
+                    EmptyDigest(), EmptyDigest(), true);
+
+                RecoveryOutcome c = RecoveryRunner.Run(pathsC, TextWriter.Null);
+                context.Expect(c.NeedsAttention, "行 9 必须 needs-attention", c.Message);
+                context.Expect(File.Exists(pathsC.JournalPath), "行 9 保留 journal", pathsC.JournalPath);
+
+                // D) 终态不一致：一个行 5、一个行 9 → 一个动作都不执行
+                CodexPaths pathsD = new CodexPaths(Path.Combine(root, "d"));
+                string liveD = pathsD.MarketBundle;
+                string backupD = Path.Combine(pathsD.BackupsRoot, "openai-bundled-sync-d", "marketplace.previous");
+                WriteTree(backupD, "old.txt", "old");
+                WriteTree(liveD, "new.txt", "new");
+                string liveD2 = Path.Combine(pathsD.CacheParent, "browser");
+                List<JournalTargetDto> targets = new List<JournalTargetDto>();
+                targets.Add(NewTarget("marketplace", liveD, backupD, null, null, TreeDigest.Compute(backupD), TreeDigest.Compute(liveD), true));
+                targets.Add(NewTarget("cache:browser", liveD2, Path.Combine(pathsD.BackupsRoot, "openai-bundled-sync-d", "cache-browser.previous"),
+                    null, null, EmptyDigest(), EmptyDigest(), true));
+                WriteJournalTargets(pathsD, "sync", targets);
+
+                RecoveryOutcome d = RecoveryRunner.Run(pathsD, TextWriter.Null);
+                context.Expect(d.NeedsAttention, "终态不一致 → needs-attention", d.Message);
+                context.Expect(Directory.Exists(liveD) && File.Exists(Path.Combine(liveD, "new.txt")),
+                    "终态不一致时 live 未被触碰", liveD);
+                context.Expect(File.Exists(pathsD.JournalPath), "终态不一致时保留 journal", pathsD.JournalPath);
+            }
+            catch (Exception ex)
+            {
+                context.Expect(false, "recovery/execute 不应抛异常", ex.GetType().Name + ": " + ex.Message);
+            }
+            finally
+            {
+                try { Directory.Delete(root, true); } catch (Exception) { }
+            }
+        }
+
+        private static void WriteTree(string directory, string fileName, string content)
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(Path.Combine(directory, fileName), content);
+        }
+
+        private static ComponentDigestDto EmptyDigest()
+        {
+            ComponentDigestDto digest = new ComponentDigestDto();
+            digest.FileCount = -1;
+            digest.SizeBytes = -1;
+            digest.TreeHash = "none";
+            return digest;
+        }
+
+        private static JournalTargetDto NewTarget(string component, string livePath, string backupPath, string stagePath,
+            string safetyPath, ComponentDigestDto oldDigest, ComponentDigestDto newDigest, bool existedBefore)
+        {
+            JournalTargetDto target = new JournalTargetDto();
+            target.Component = component;
+            target.LivePath = livePath;
+            target.BackupPath = backupPath;
+            target.StagePath = stagePath;
+            target.SafetyPath = safetyPath;
+            target.OldDigest = oldDigest;
+            target.NewDigest = newDigest;
+            target.ExistedBefore = existedBefore;
+            return target;
+        }
+
+        private static void WriteJournal(CodexPaths paths, string kind, string livePath, string backupPath,
+            string stagePath, string safetyPath, ComponentDigestDto oldDigest, ComponentDigestDto newDigest, bool existedBefore)
+        {
+            List<JournalTargetDto> targets = new List<JournalTargetDto>();
+            targets.Add(NewTarget("marketplace", livePath, backupPath, stagePath, safetyPath, oldDigest, newDigest, existedBefore));
+            WriteJournalTargets(paths, kind, targets);
+        }
+
+        private static void WriteJournalTargets(CodexPaths paths, string kind, List<JournalTargetDto> targets)
+        {
+            JournalDto journal = new JournalDto();
+            journal.OperationId = "recovery-test";
+            journal.BackupId = "recovery-test";
+            journal.Phase = kind == "rollback" ? RollbackPhases.CommitStarted : JournalPhases.CommitStarted;
+            journal.Targets = targets;
+            JournalStore.Write(paths, journal);
         }
 
         /// <summary>
