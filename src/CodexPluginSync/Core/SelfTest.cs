@@ -189,12 +189,14 @@ namespace CodexPluginSync.Tests
                 SyncTransactionCase(context);
                 SyncEngineCase(context, baseDirectory);
                 NativeHostBoundaryCase(context, baseDirectory);
+                ProcessGuardCase(context);
                 EfsStateMachineCase(context, baseDirectory);
                 RollbackRestoreCase(context, baseDirectory);
                 RollbackRoundTripCase(context, baseDirectory);
                 RollbackGuardsCase(context, baseDirectory);
                 CleanupRetentionCase(context, baseDirectory);
                 RecoveryExecuteCase(context, baseDirectory);
+                EfsCopyCase(context, baseDirectory);
                 DiagRedactionCase(context, baseDirectory);
                 ArgumentParsingCase(context);
             }
@@ -717,6 +719,7 @@ namespace CodexPluginSync.Tests
                 options.Out = TextWriter.Null;
                 options.Err = TextWriter.Null;
                 options.SkipNativeHost = true;
+                options.SkipProcessCheck = true;
 
                 SyncRunResult first = SyncEngine.Run(options);
                 context.Expect(first.ExitCode == ExitCodesLocator.Ok, "首次 --sync 退出码 0", first.ExitCode.ToString());
@@ -754,6 +757,40 @@ namespace CodexPluginSync.Tests
             {
                 try { Directory.Delete(root, true); } catch (Exception) { }
             }
+        }
+
+        /// <summary>
+        /// §10.1 进程守卫：写入路径必须能真的检测到锁定进程（真机验收时就是 extension-host 锁住了
+        /// cache\chrome，导致目录 rename 被拒）。这里用当前进程自己的名字当靶子，证明检测是真在跑。
+        /// </summary>
+        private static void ProcessGuardCase(TestContext context)
+        {
+            context.Begin("process/guard");
+
+            string selfName = System.Diagnostics.Process.GetCurrentProcess().ProcessName;
+            List<string> extra = new List<string>();
+            extra.Add(selfName);
+            List<LockingProcess> detected = ProcessGuard.Detect(extra);
+            context.Expect(detected.Count > 0, "能检测到指定名字的进程（" + selfName + "）", detected.Count.ToString());
+
+            List<string> missing = new List<string>();
+            string bogus = "cps-definitely-not-running-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            missing.Add(bogus);
+            // 默认名单（chrome/msedge/extension-host）总会被扫到，所以只断言“没有这个不存在的名字”
+            List<LockingProcess> none = ProcessGuard.Detect(missing);
+            bool bogusSeen = false;
+            for (int i = 0; i < none.Count; i++)
+            {
+                if (string.Equals(none[i].Name, bogus, StringComparison.OrdinalIgnoreCase)) { bogusSeen = true; }
+            }
+            context.Expect(!bogusSeen, "不存在的进程名不会出现在结果里", bogus);
+
+            bool hasExtensionHost = false;
+            for (int i = 0; i < ProcessGuard.DefaultLockingProcessNames.Length; i++)
+            {
+                if (ProcessGuard.DefaultLockingProcessNames[i] == "extension-host") { hasExtensionHost = true; }
+            }
+            context.Expect(hasExtensionHost, "默认锁定进程包含 extension-host（真机结论）", "missing");
         }
 
         /// <summary>§9.4 路径边界：只接受用户目录内、文件名恰为 com.openai.codexextension.json 的清单。不读注册表。</summary>
@@ -901,6 +938,7 @@ namespace CodexPluginSync.Tests
                 options.CodexHome = root;
                 options.SkipNativeHost = true;
                 options.SkipEfs = true;
+                options.SkipProcessCheck = true;
                 options.Out = TextWriter.Null;
                 options.Err = TextWriter.Null;
 
@@ -1218,6 +1256,7 @@ namespace CodexPluginSync.Tests
                 sync.Err = TextWriter.Null;
                 sync.SkipNativeHost = true;
                 sync.SkipEfs = true;
+                sync.SkipProcessCheck = true;
 
                 SyncRunResult first = SyncEngine.Run(sync);
                 context.Expect(first.ExitCode == ExitCodesLocator.Ok, "sync 退出码 0", first.ExitCode + "/" + first.Message);
@@ -1229,6 +1268,7 @@ namespace CodexPluginSync.Tests
                 rollback.CodexHome = codexHome;
                 rollback.SkipNativeHost = true;
                 rollback.SkipEfs = true;
+                rollback.SkipProcessCheck = true;
                 rollback.Out = TextWriter.Null;
                 rollback.Err = TextWriter.Null;
 
@@ -1343,6 +1383,61 @@ namespace CodexPluginSync.Tests
             }
         }
 
+        /// <summary>
+        /// 真机回归（2026-11-24）：AppX 源包里的文件带 EFS 加密属性，复制到**未加密**目录时
+        /// File.Copy 会直接失败（ERROR_ENCRYPTION_FAILED 6000），而复制到加密目录反而正常。
+        /// 这里用 cipher 造一个加密源目录，验证 Installer 能把它拷到普通目录（失败则记为 skip）。
+        /// </summary>
+        private static void EfsCopyCase(TestContext context, string baseDirectory)
+        {
+            context.Begin("efs/encrypted-source-copy");
+
+            string encryptedSource = Path.Combine(baseDirectory, "efs-src");
+            string plainDestination = Path.Combine(baseDirectory, "efs-dst");
+            try
+            {
+                Directory.CreateDirectory(encryptedSource);
+                bool? pre = Efs.GetEncrypted(encryptedSource);
+                if (!pre.HasValue)
+                {
+                    context.Expect(true, "EFS 属性不可读，记为 skip", "skipped");
+                    return;
+                }
+                if (!Efs.SetEncrypted(encryptedSource, true))
+                {
+                    context.Expect(true, "卷不支持 EFS，记为 skip", "skipped");
+                    return;
+                }
+                File.WriteAllText(Path.Combine(encryptedSource, "payload.txt"), "payload");
+                string payloadPath = Path.Combine(encryptedSource, "payload.txt");
+                // 注意：Efs.GetEncrypted 只针对目录（内部先 Directory.Exists），文件属性要直接读。
+                FileAttributes payloadAttributes = File.GetAttributes(payloadPath);
+                bool fileEncrypted = (payloadAttributes & FileAttributes.Encrypted) == FileAttributes.Encrypted;
+                if (!fileEncrypted)
+                {
+                    context.Expect(true, "加密目录里的新文件没继承加密属性，记为 skip", "skipped");
+                    return;
+                }
+
+                Installer.CopyTreePreservingLinks(encryptedSource, plainDestination);
+                context.Expect(File.Exists(Path.Combine(plainDestination, "payload.txt")), "加密源能拷到未加密目录", plainDestination);
+                context.Expect(File.ReadAllText(Path.Combine(plainDestination, "payload.txt")) == "payload",
+                    "内容一致", "mismatch");
+                context.Expect(TreeDigest.Equal(TreeDigest.Compute(encryptedSource), TreeDigest.Compute(plainDestination)),
+                    "拷贝后摘要与源一致", "mismatch");
+            }
+            catch (Exception ex)
+            {
+                context.Expect(false, "efs/encrypted-source-copy 不应抛异常", ex.GetType().Name + ": " + ex.Message);
+            }
+            finally
+            {
+                try { Efs.SetEncrypted(encryptedSource, false); } catch (Exception) { }
+                try { Directory.Delete(encryptedSource, true); } catch (Exception) { }
+                try { Directory.Delete(plainDestination, true); } catch (Exception) { }
+            }
+        }
+
         private static void WriteTree(string directory, string fileName, string content)
         {
             Directory.CreateDirectory(directory);
@@ -1411,6 +1506,7 @@ namespace CodexPluginSync.Tests
                 options.CodexHome = root;
                 options.SkipNativeHost = true;
                 options.SkipEfs = true;
+                options.SkipProcessCheck = true;
                 options.Out = TextWriter.Null;
                 options.Err = TextWriter.Null;
 

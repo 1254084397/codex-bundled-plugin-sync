@@ -14,6 +14,8 @@ namespace CodexPluginSync.Core
         public bool SkipNativeHost;
         /// <summary>selftest 专用：跳过 EFS 预检/开启/恢复（不调用 cipher）。</summary>
         public bool SkipEfs;
+        /// <summary>selftest 专用：跳过进程守卫（不读真实进程列表）。</summary>
+        public bool SkipProcessCheck;
         public TextWriter Out;
         public TextWriter Err;
     }
@@ -71,6 +73,20 @@ namespace CodexPluginSync.Core
                     for (int i = 0; i < recovery.Actions.Count; i++)
                     {
                         result.Lines.Add("恢复：" + recovery.Actions[i]);
+                    }
+                }
+
+                // §10.1：写入前先看进程守卫。检测到锁定进程就拒绝，而不是写到一半再失败。
+                if (!options.SkipProcessCheck)
+                {
+                    List<LockingProcess> locking = ProcessGuard.Detect(settings.ExtraLockingProcesses);
+                    if (locking.Count > 0)
+                    {
+                        result.Status = SyncTransaction.StatusAborted;
+                        result.ExitCode = ExitCodesLocator.Error;
+                        result.Message = "检测到会锁住插件目录的进程，未写入任何内容（请先完全退出）：" + DescribeLocking(locking);
+                        error.WriteLine(result.Message);
+                        return result;
                     }
                 }
 
@@ -259,6 +275,16 @@ namespace CodexPluginSync.Core
                 error.WriteLine("同步失败：" + ex.Message);
                 return result;
             }
+        }
+
+        private static string DescribeLocking(List<LockingProcess> locking)
+        {
+            List<string> parts = new List<string>();
+            for (int i = 0; i < locking.Count; i++)
+            {
+                parts.Add(locking[i].Name + "(" + locking[i].Pid.ToString(CultureInfo.InvariantCulture) + ")");
+            }
+            return string.Join(", ", parts.ToArray());
         }
 
         private static bool MarketplaceIsCurrent(string sourceBundle, string marketBundle)

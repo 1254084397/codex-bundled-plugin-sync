@@ -14,6 +14,8 @@ namespace CodexPluginSync.Core
         public bool SkipNativeHost;
         /// <summary>selftest 专用：跳过 EFS 预检/开启/恢复。</summary>
         public bool SkipEfs;
+        /// <summary>selftest 专用：跳过进程守卫。</summary>
+        public bool SkipProcessCheck;
         public TextWriter Out;
         public TextWriter Err;
     }
@@ -92,6 +94,20 @@ namespace CodexPluginSync.Core
                 for (int i = 0; i < recovery.Actions.Count; i++)
                 {
                     result.Lines.Add("恢复：" + recovery.Actions[i]);
+                }
+
+                // §10.1：写入前先看进程守卫（extension-host 会锁住 cache\chrome，导致目录 rename 被拒）。
+                if (!options.SkipProcessCheck)
+                {
+                    List<LockingProcess> locking = ProcessGuard.Detect(settings.ExtraLockingProcesses);
+                    if (locking.Count > 0)
+                    {
+                        result.Status = SyncTransaction.StatusAborted;
+                        result.ExitCode = ExitCodesLocator.Error;
+                        result.Message = "检测到会锁住插件目录的进程，未写入任何内容（请先完全退出）：" + DescribeLocking(locking);
+                        error.WriteLine(result.Message);
+                        return result;
+                    }
                 }
 
                 // 1) 选备份 -------------------------------------------------------
@@ -367,6 +383,16 @@ namespace CodexPluginSync.Core
                 }
                 CleanupStages(plan);
             }
+        }
+
+        private static string DescribeLocking(List<LockingProcess> locking)
+        {
+            List<string> parts = new List<string>();
+            for (int i = 0; i < locking.Count; i++)
+            {
+                parts.Add(locking[i].Name + "(" + locking[i].Pid.ToString(CultureInfo.InvariantCulture) + ")");
+            }
+            return string.Join(", ", parts.ToArray());
         }
 
         private static void MaybeFail(string point)

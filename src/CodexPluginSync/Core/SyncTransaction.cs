@@ -296,6 +296,25 @@ namespace CodexPluginSync.Core
             for (int i = targets.Count - 1; i >= 0; i--)
             {
                 SyncTarget target = targets[i];
+                bool swappedOut = journal.Targets[i].SwappedOut;
+                bool swappedIn = journal.Targets[i].SwappedIn;
+
+                // 真机验收（2026-11-24）：交换失败往往发生在中途，后面的组件根本未动。
+                // 那些组件的正确状态就是“live 还在原地”，不得因为没有备份而被判为退回失败。
+                if (!swappedOut && !swappedIn)
+                {
+                    if (target.ExistedBefore && !Directory.Exists(target.LivePath))
+                    {
+                        allReverted = false;
+                        result.Add(target.Component + "：本次未交换但 live 已缺失（需人工处理）");
+                    }
+                    else
+                    {
+                        result.Add(target.Component + "：本次未交换，保持原样");
+                    }
+                    continue;
+                }
+
                 try
                 {
                     if (journal.Targets[i].SwappedIn && Directory.Exists(target.LivePath))

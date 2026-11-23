@@ -61,7 +61,7 @@ namespace CodexPluginSync.Core
             for (int i = 0; i < files.Length; i++)
             {
                 string target = Path.Combine(destination, Path.GetFileName(files[i]));
-                File.Copy(files[i], target, true);
+                CopyFileRobust(files[i], target, destination);
             }
 
             for (int i = 0; i < directories.Length; i++)
@@ -81,6 +81,87 @@ namespace CodexPluginSync.Core
                 }
                 CopyDirectory(directory, target, links);
             }
+        }
+
+        /// <summary>
+        /// 复制单个文件。真机验收（2026-11-24）撞到的坑：AppX 源包里的文件本身带 EFS 加密属性，
+        /// 把它 File.Copy 到**未加密**的目标目录会直接失败（ERROR_ENCRYPTION_FAILED 6000，
+        /// “无法加密指定的文件”），而复制到加密目录反而正常。这里分两条路：
+        ///   - 源加密 + 目标是未加密目录 → 字节流复制（目标不带 EFS 属性，这正是想要的结果）；
+        ///   - 其余情况仍用 File.Copy，保留时间戳与属性。
+        /// 另外保留了 6000 的异常回退，避免未预料的继承场景又炸一次。
+        /// </summary>
+        private static void CopyFileRobust(string source, string destination, string destinationDirectory)
+        {
+            bool sourceEncrypted = IsEncrypted(source);
+            bool destinationEncrypted = IsEncrypted(destinationDirectory);
+
+            if (sourceEncrypted && !destinationEncrypted)
+            {
+                CopyByStream(source, destination);
+                return;
+            }
+
+            try
+            {
+                File.Copy(source, destination, true);
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                CopyByStream(source, destination);
+            }
+            catch (IOException ex)
+            {
+                // 0x1770 = ERROR_ENCRYPTION_FAILED
+                if ((ex.HResult & 0xFFFF) != 0x1770 && ex.HResult != unchecked((int)0x80071770))
+                {
+                    throw;
+                }
+                CopyByStream(source, destination);
+            }
+        }
+
+        private static bool IsEncrypted(string path)
+        {
+            try
+            {
+                FileAttributes attributes = File.GetAttributes(path);
+                return (attributes & FileAttributes.Encrypted) == FileAttributes.Encrypted;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private static void CopyByStream(string source, string destination)
+        {
+            string parent = Path.GetDirectoryName(destination);
+            if (!string.IsNullOrEmpty(parent) && !Directory.Exists(parent))
+            {
+                Directory.CreateDirectory(parent);
+            }
+
+            DateTime lastWrite = File.GetLastWriteTimeUtc(source);
+            DateTime creation = File.GetCreationTimeUtc(source);
+
+            using (FileStream input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (FileStream output = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                byte[] buffer = new byte[81920];
+                int read;
+                while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    output.Write(buffer, 0, read);
+                }
+            }
+
+            try
+            {
+                File.SetLastWriteTimeUtc(destination, lastWrite);
+                File.SetCreationTimeUtc(destination, creation);
+            }
+            catch (Exception) { }
         }
 
         /// <summary>
