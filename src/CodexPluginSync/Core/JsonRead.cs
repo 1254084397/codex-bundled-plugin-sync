@@ -80,6 +80,18 @@ namespace CodexPluginSync.Core
 
         [DataMember(Name = "swappedIn")]
         public bool SwappedIn;
+
+        /// <summary>回滚专用（§7.3）：矩阵里的第三项由安全快照路径代替 stage。</summary>
+        [DataMember(Name = "safetyPath")]
+        public string SafetyPath;
+
+        /// <summary>操作前内容摘要（sync：live 同步前；rollback：安全快照内容）。</summary>
+        [DataMember(Name = "oldDigest")]
+        public ComponentDigestDto OldDigest;
+
+        /// <summary>本次操作要落地的内容摘要（sync：stage；rollback：备份内容）。</summary>
+        [DataMember(Name = "newDigest")]
+        public ComponentDigestDto NewDigest;
     }
 
     [DataContract]

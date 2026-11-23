@@ -22,14 +22,18 @@
 | **§6.3/§6.4 事务写侧（C#）** | `Core/TransactionState.cs` | `AtomicJsonFile`（临时文件 + `Flush(true)` + `File.Replace`、剥 BOM）、`JournalStore`（seq 写前递增、UTC、可删除）、`BackupManifestStore`（Write + `Validate`：components 为空不得 complete、state=moved 缺 `previousDigest` 直接拒）；`transaction/state-io` 覆盖 |
 | **§9.4 native host 写入（C#）** | `Core/NativeHostWriter.cs` | 注册表默认值当外部数据：只接受用户目录内、文件名恰为 `com.openai.codexextension.json` 的路径；指向比较走 `PathIdentity`（junction 等价），漂移才写；写前备份原文件、写后重读校验；`nativehost/path-boundary` 5 条断言 |
 | **§7.2 同步事务编排（C#）** | `Core/SyncTransaction.cs`、`Core/TreeDigest.cs` | Planned → BackupCreated → Staged → Verified → CommitStarted → Committed → Finalized 全阶段写 journal；CommitStarted 之后失败自动 Revert 并逐组件比摘要；stage 缺失时在动 live 之前中止。**纯编排**：不含 robocopy/EFS/native host（由调用方在 Staged 前完成），CLI 尚未接入 |
+| **`--sync` 端到端（C#）** | `Core/SyncEngine.cs`、`Core/Installer.cs` | 解析 CodexHome/AppX → 组件集合（marketplace + browser/chrome/computer-use）→ stage（junction 不展开、复制后重建）→ 七阶段事务 → native host 钩子；`sync/engine` 用例（两次运行：完整同步 / 缓存命中跳过） |
+| **§8 EFS（C#）** | `Core/Efs.cs`、`SyncEngine` | stage 前 `PrepareForWrite(marketParent)`，`finally` 统一 `Restore`；成功判据是**重新读到的 Encrypted 属性**（实测 `cipher /d` 对不存在路径仍返回 0），读不到即“未恢复”→ 退出码 2。`efs/state-machine` 6 条断言（卷不支持时记 skip，不宣称通过） |
+| **§7.3 回滚（C#）** | `Core/RollbackEngine.cs` | 按 `createdUtc` 选最新 `status=complete`（或 `--backup <id>`）；非 complete 直接拒；动 live 前校验 `previousDigest`；安全快照写完并校验通过才动 live；先写满 `journal.targets` 再进 `rollback-commit-started`；失败退回安全快照、退不干净 → needs-attention 并保留 journal 与两份快照；遗留 journal 直接阻停（不猜）。`rollback/restore` 12 条 + `rollback/roundtrip` 8 条 + `rollback/guards` 11 条断言 |
 
 ## 实测结果（本机）
 
 ```text
---selftest                      → SELFTEST PASS (17 cases)   ← 2026-11-24 构建后实测
+--selftest                      → SELFTEST PASS (21 cases)   ← 2026-11-24 构建后实测
 --check（真机）                  → Verdict: ok, Update needed: No, exit 0
 --check --json（stderr 丢弃）     → 单行 JSON 可解析，exitCode=2 时与进程退出码一致
 --bogus                         → exit 1
+真机 native-messaging 清单哈希      → 2980548C…F9022（selftest 用 SkipNativeHost，未变）
 ```
 
 真机发现并已修复的假阳性：Chrome manifest 指向 `...\chrome\latest\...`，`latest` 是指向版本目录的
@@ -41,18 +45,16 @@ junction。字符串比较会误报 `outdated`（且会去改写一个正确的�
 `scripts/*.ps1` 的旧实现按组内审查修了五处风险（回滚安全性、提交失败恢复、EFS 还原、
 注册表路径边界、并发互斥），并补了 15 个 fixture 用例。
 落点与验证方式见 `docs/REVIEW-FIXES.md`，测试入口见 `tests/README.md`。
-C# 侧尚未接管 `--sync` / `--rollback`，因此下表仍然有效。
+C# 侧已接管 `--sync` 与 `--rollback`（`Core/SyncEngine.cs`、`Core/RollbackEngine.cs`），
+上表“已实现并可验证”为 C# 实测结果；脚本层保留为对照实现与验收入口。
 
 ## 未实现（不得视为已完成）
 
 | 缺口 | 归属 | 依据 |
 | --- | --- | --- |
-| `--sync` / `--rollback` / `--cleanup-only` / `--export-diag` | M1 增量 2+ | §7.2、§7.3、§7.4、§7.5 |
-| journal 写侧、`operationKind`、§6.6 恢复矩阵 11 行 | 同上 | §6.4、§6.6 |
-| 备份写入与移入后校验、`status=complete` 合成判据 | 同上 | §6.3、§7.2 |
-| 回滚状态机与安全快照 | 同上 | §7.3 |
-| Native host 写入与 §9.4 存在性位 | 同上 | §9.4 |
-| EFS 探测/开启/撤销（含探测残留处置） | 同上 | §8.1、§8.2 |
+| `--cleanup-only` / `--export-diag` | M1 增量 3+ | §7.4、§7.5 |
+| 崩溃后的自动恢复执行（`--check` 目前只报告 phase，不跑矩阵动作） | 同上 | §6.6 |
+| native host 回滚的“注册表值原本不存在 → 删键”分支（sync 不会建键，故未实现；脚本层已覆盖） | 同上 | §9.4 |
 | `Redactor` / 诊断包 | 同上 | §7.5 |
 | WinForms 界面、托盘 | M3 / M4 | §11、§12 |
 | `.cmd` 兼容映射（2→0） | M2 | §2.4 |

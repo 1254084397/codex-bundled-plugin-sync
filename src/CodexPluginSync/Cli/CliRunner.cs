@@ -42,12 +42,14 @@ namespace CodexPluginSync.Cli
                     return RunCheck(options, Console.Out, Console.Error);
                 case CliOptions.CommandSync:
                     return RunSync(options, Console.Out, Console.Error);
+                case CliOptions.CommandRollback:
+                    return RunRollback(options, Console.Out, Console.Error);
                 case CliOptions.CommandSelfTest:
                     return SelfTest.Run(options.FixtureDirectory, Console.Out, Console.Error);
                 default:
                     Console.Error.WriteLine("Command '" + options.Command +
                         "' is not implemented in this build (M1 increment 1: check only).");
-                    Console.Error.WriteLine("Implemented today: --check, --sync, --selftest, --version, --help.");
+                    Console.Error.WriteLine("Implemented today: --check, --sync, --rollback, --selftest, --version, --help.");
                     return ExitCodes.Error;
             }
         }
@@ -124,6 +126,19 @@ namespace CodexPluginSync.Cli
             }
             return result.ExitCode;
         }
+
+        public static int RunRollback(CliOptions options, TextWriter stdout, TextWriter stderr)
+        {
+            Settings settings = Settings.Load(null);
+            RollbackOptions rollbackOptions = new RollbackOptions();
+            rollbackOptions.CodexHome = options.CodexHomeOverride ?? settings.CodexHome;
+            rollbackOptions.BackupId = options.BackupId;
+            rollbackOptions.Out = stdout;
+            rollbackOptions.Err = stderr;
+
+            SyncRunResult result = RollbackEngine.Run(rollbackOptions);
+            return result.ExitCode;
+        }
         public static string UsageText()
         {
             StringWriter writer = new StringWriter();
@@ -133,8 +148,8 @@ namespace CodexPluginSync.Cli
             writer.WriteLine("Usage:");
             writer.WriteLine("  CodexPluginSync.exe                          GUI (M3; prints this help until then)");
             writer.WriteLine("  CodexPluginSync.exe --check [--json] [--quiet]     read-only check");
-            writer.WriteLine("  CodexPluginSync.exe --sync [--force] [--source-bundle <dir>]  run the sync transaction (EFS / native host not wired yet)");
-            writer.WriteLine("  CodexPluginSync.exe --rollback [--backup <id>]     restore a backup (not in this build)");
+            writer.WriteLine("  CodexPluginSync.exe --sync [--force] [--source-bundle <dir>]  run the sync transaction");
+            writer.WriteLine("  CodexPluginSync.exe --rollback [--backup <id>]     restore a backup (newest status=complete by default)");
             writer.WriteLine("  CodexPluginSync.exe --cleanup-only                 remove stale stages and old logs (not in this build)");
             writer.WriteLine("  CodexPluginSync.exe --export-diag [--out <path>] [--no-redact]   (not in this build)");
             writer.WriteLine("  CodexPluginSync.exe --selftest [--fixture <dir>]   fixture end-to-end self-test");

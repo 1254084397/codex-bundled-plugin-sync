@@ -190,6 +190,9 @@ namespace CodexPluginSync.Tests
                 SyncEngineCase(context, baseDirectory);
                 NativeHostBoundaryCase(context, baseDirectory);
                 EfsStateMachineCase(context, baseDirectory);
+                RollbackRestoreCase(context, baseDirectory);
+                RollbackRoundTripCase(context, baseDirectory);
+                RollbackGuardsCase(context, baseDirectory);
                 ArgumentParsingCase(context);
             }
             finally
@@ -847,6 +850,282 @@ namespace CodexPluginSync.Tests
                 try { Efs.SetEncrypted(target, false); } catch (Exception) { }
                 try { Directory.Delete(target, true); } catch (Exception) { }
             }
+        }
+
+        /// <summary>
+        /// §7.3 回滚主路径：完整备份 → 校验 → 安全快照 → 逐组件回到同步前内容 → 安全快照可回滚。
+        /// 只用临时目录，不读注册表、不动 EFS。
+        /// </summary>
+        private static void RollbackRestoreCase(TestContext context, string baseDirectory)
+        {
+            context.Begin("rollback/restore");
+
+            string root = Path.Combine(baseDirectory, "rollback-restore");
+            try
+            {
+                CodexPaths paths = new CodexPaths(root);
+                string livePath = paths.MarketBundle;
+                Directory.CreateDirectory(livePath);
+                File.WriteAllText(Path.Combine(livePath, "new.txt"), "new-content");
+
+                string backupDirectory = Path.Combine(paths.BackupsRoot, CodexPaths.BackupFolderPrefix + "fix1");
+                string backupPath = Path.Combine(backupDirectory, "marketplace.previous");
+                Directory.CreateDirectory(backupPath);
+                File.WriteAllText(Path.Combine(backupPath, "old.txt"), "old-content");
+
+                ComponentDigestDto oldDigest = TreeDigest.Compute(backupPath);
+                ComponentDigestDto newDigest = TreeDigest.Compute(livePath);
+
+                BackupManifestDto manifest = new BackupManifestDto();
+                manifest.BackupId = "fix1";
+                manifest.Kind = "sync";
+                manifest.Status = BackupStates.Complete;
+                manifest.CreatedUtc = "2026-01-02T03:04:05Z";
+                manifest.Components = new List<BackupComponentDto>();
+                manifest.NativeHost = new List<BackupNativeHostDto>();
+                BackupComponentDto component = new BackupComponentDto();
+                component.Name = "marketplace";
+                component.LivePath = livePath;
+                component.BackupPath = backupPath;
+                component.ExistedBefore = true;
+                component.State = BackupStates.Moved;
+                component.Digest = newDigest;
+                component.PreviousDigest = oldDigest;
+                manifest.Components.Add(component);
+                BackupManifestStore.Write(backupDirectory, manifest);
+
+                RollbackOptions options = new RollbackOptions();
+                options.CodexHome = root;
+                options.SkipNativeHost = true;
+                options.SkipEfs = true;
+                options.Out = TextWriter.Null;
+                options.Err = TextWriter.Null;
+
+                SyncRunResult run = RollbackEngine.Run(options);
+                context.Expect(run.ExitCode == ExitCodesLocator.Ok, "回滚退出码 0", run.ExitCode + "/" + run.Message);
+                context.Expect(run.Status == RollbackEngine.StatusRolledBack, "终态 rolled-back", run.Status);
+                context.Expect(File.Exists(Path.Combine(livePath, "old.txt")) && !File.Exists(Path.Combine(livePath, "new.txt")),
+                    "live 已回到同步前内容", string.Join(",", Directory.GetFiles(livePath)));
+                context.Expect(!File.Exists(paths.JournalPath), "回滚完成后 journal 已删除", paths.JournalPath);
+                context.Expect(File.Exists(Path.Combine(backupPath, "old.txt")), "备份目录内容保留（回滚源不动）", backupPath);
+                string[] leftoverStages = Directory.GetDirectories(paths.MarketParent, "*.rollback-stage-*", SearchOption.AllDirectories);
+                context.Expect(leftoverStages.Length == 0, "无 rollback-stage 残留", leftoverStages.Length.ToString());
+                context.Expect(TreeDigest.Equal(TreeDigest.Compute(livePath), oldDigest), "live 摘要与备份内容一致", "mismatch");
+
+                string[] safetyManifests = Directory.GetFiles(paths.BackupsRoot, BackupManifestStore.FileName, SearchOption.AllDirectories);
+                string safetyRoot = null;
+                BackupManifestDto safety = null;
+                for (int i = 0; i < safetyManifests.Length; i++)
+                {
+                    BackupManifestDto candidate = JsonRead.FromFile<BackupManifestDto>(safetyManifests[i]);
+                    if (candidate != null && candidate.Kind == "rollback-safety")
+                    {
+                        safety = candidate;
+                        safetyRoot = Path.GetDirectoryName(safetyManifests[i]);
+                    }
+                }
+                context.Expect(safety != null, "产生了 rollback-safety 快照", safetyManifests.Length.ToString());
+                context.Expect(safety != null && safety.Status == BackupStates.Complete, "安全快照 status=complete", safety == null ? "null" : safety.Status);
+                context.Expect(safety != null && BackupManifestStore.Validate(safety) == null, "安全快照通过 §6.3 完成判据",
+                    safety == null ? "null" : BackupManifestStore.Validate(safety));
+                context.Expect(safetyRoot != null && File.Exists(Path.Combine(safetyRoot, "marketplace", "new.txt")),
+                    "安全快照保留了回滚前的 live 内容", safetyRoot ?? "(null)");
+                context.Expect(TreeDigest.Equal(safety == null ? null : safety.Components[0].Digest, newDigest),
+                    "安全快照摘要记录的就是回滚前 live", "mismatch");
+            }
+            catch (Exception ex)
+            {
+                context.Expect(false, "rollback/restore 不应抛异常", ex.GetType().Name + ": " + ex.Message);
+            }
+            finally
+            {
+                try { Directory.Delete(root, true); } catch (Exception) { }
+            }
+        }
+
+        /// <summary>
+        /// sync → rollback 闭环：直接吃 SyncEngine 产出的 backup.json（不手造），
+        /// 验证 digest/previousDigest 语义与 existedBefore=false 的“删除”回滚语义。
+        /// </summary>
+        private static void RollbackRoundTripCase(TestContext context, string baseDirectory)
+        {
+            context.Begin("rollback/roundtrip");
+
+            string root = Path.Combine(baseDirectory, "rollback-roundtrip");
+            string sourceBundle = Path.Combine(root, "src", "openai-bundled");
+            string codexHome = Path.Combine(root, "CodexHome");
+            try
+            {
+                string[] plugins = new string[] { "browser", "chrome", "computer-use" };
+                for (int i = 0; i < plugins.Length; i++)
+                {
+                    string pluginDir = Path.Combine(sourceBundle, "plugins", plugins[i]);
+                    string metaDir = Path.Combine(pluginDir, ".codex-plugin");
+                    Directory.CreateDirectory(metaDir);
+                    File.WriteAllText(Path.Combine(metaDir, "plugin.json"),
+                        "{\"name\":\"" + plugins[i] + "\",\"version\":\"2.0.0\"}");
+                    File.WriteAllText(Path.Combine(pluginDir, "payload.txt"), "payload-" + plugins[i]);
+                }
+
+                Directory.CreateDirectory(Path.Combine(codexHome, ".tmp", "bundled-marketplaces"));
+                Directory.CreateDirectory(Path.Combine(codexHome, "plugins", "cache", "openai-bundled"));
+                Directory.CreateDirectory(Path.Combine(codexHome, "backups"));
+
+                SyncOptions sync = new SyncOptions();
+                sync.CodexHome = codexHome;
+                sync.SourceBundleOverride = sourceBundle;
+                sync.Out = TextWriter.Null;
+                sync.Err = TextWriter.Null;
+                sync.SkipNativeHost = true;
+                sync.SkipEfs = true;
+
+                SyncRunResult first = SyncEngine.Run(sync);
+                context.Expect(first.ExitCode == ExitCodesLocator.Ok, "sync 退出码 0", first.ExitCode + "/" + first.Message);
+
+                CodexPaths paths = new CodexPaths(codexHome);
+                context.Expect(Directory.Exists(paths.MarketBundle), "sync 后 marketplace 存在", paths.MarketBundle);
+
+                RollbackOptions rollback = new RollbackOptions();
+                rollback.CodexHome = codexHome;
+                rollback.SkipNativeHost = true;
+                rollback.SkipEfs = true;
+                rollback.Out = TextWriter.Null;
+                rollback.Err = TextWriter.Null;
+
+                SyncRunResult back = RollbackEngine.Run(rollback);
+                context.Expect(back.ExitCode == ExitCodesLocator.Ok, "rollback 退出码 0（默认选最新 complete）", back.ExitCode + "/" + back.Message);
+                context.Expect(!Directory.Exists(paths.MarketBundle), "marketplace 回到“原本不存在”", paths.MarketBundle);
+                context.Expect(!Directory.Exists(Path.Combine(paths.CacheParent, "browser")), "cache:browser 回到“原本不存在”", paths.CacheParent);
+                context.Expect(!Directory.Exists(Path.Combine(paths.CacheParent, "chrome")), "cache:chrome 回到“原本不存在”", paths.CacheParent);
+                context.Expect(!File.Exists(paths.JournalPath), "rollback 后无 journal 残留", paths.JournalPath);
+
+                string[] safetyManifests = Directory.GetFiles(paths.BackupsRoot, BackupManifestStore.FileName, SearchOption.AllDirectories);
+                int safetyCount = 0;
+                for (int i = 0; i < safetyManifests.Length; i++)
+                {
+                    BackupManifestDto candidate = JsonRead.FromFile<BackupManifestDto>(safetyManifests[i]);
+                    if (candidate != null && candidate.Kind == "rollback-safety") { safetyCount++; }
+                }
+                context.Expect(safetyCount == 1, "恰好产出 1 份 rollback-safety 快照", safetyCount.ToString());
+            }
+            catch (Exception ex)
+            {
+                context.Expect(false, "rollback/roundtrip 不应抛异常", ex.GetType().Name + ": " + ex.Message);
+            }
+            finally
+            {
+                try { Directory.Delete(root, true); } catch (Exception) { }
+            }
+        }
+
+        /// <summary>
+        /// §7.3 硬前置：partial 不可回滚、缺 previousDigest 拒绝、备份内容不符拒绝、
+        /// 未收尾 journal 直接阻停、无备份拒绝——五种情形都必须“live 一点不动”。
+        /// </summary>
+        private static void RollbackGuardsCase(TestContext context, string baseDirectory)
+        {
+            context.Begin("rollback/guards");
+
+            string root = Path.Combine(baseDirectory, "rollback-guards");
+            try
+            {
+                CodexPaths paths = new CodexPaths(root);
+                string livePath = paths.MarketBundle;
+                Directory.CreateDirectory(livePath);
+                File.WriteAllText(Path.Combine(livePath, "new.txt"), "new-content");
+
+                RollbackOptions options = new RollbackOptions();
+                options.CodexHome = root;
+                options.SkipNativeHost = true;
+                options.SkipEfs = true;
+                options.Out = TextWriter.Null;
+                options.Err = TextWriter.Null;
+
+                // a) 完全没备份
+                SyncRunResult none = RollbackEngine.Run(options);
+                context.Expect(none.ExitCode == ExitCodesLocator.Error, "无备份 → 退出码 1", none.ExitCode.ToString());
+                context.Expect(File.Exists(Path.Combine(livePath, "new.txt")), "无备份时 live 未被触碰", livePath);
+
+                // b) status=partial
+                string partialDirectory = Path.Combine(paths.BackupsRoot, CodexPaths.BackupFolderPrefix + "partial1");
+                string partialBackup = Path.Combine(partialDirectory, "marketplace.previous");
+                Directory.CreateDirectory(partialBackup);
+                File.WriteAllText(Path.Combine(partialBackup, "old.txt"), "old-content");
+                BackupManifestDto partial = NewManifest("partial1", BackupStates.Partial, "2026-01-01T00:00:00Z", partialBackup, livePath, TreeDigest.Compute(partialBackup), TreeDigest.Compute(livePath));
+                BackupManifestStore.Write(partialDirectory, partial);
+
+                SyncRunResult partialRun = RollbackEngine.Run(options);
+                context.Expect(partialRun.ExitCode == ExitCodesLocator.Error, "status=partial → 拒绝", partialRun.Status + "/" + partialRun.Message);
+                context.Expect(File.Exists(Path.Combine(livePath, "new.txt")), "partial 被拒时 live 未被触碰", "touched");
+
+                // c) complete 但缺 previousDigest
+                string noDigestDirectory = Path.Combine(paths.BackupsRoot, CodexPaths.BackupFolderPrefix + "nodigest");
+                string noDigestBackup = Path.Combine(noDigestDirectory, "marketplace.previous");
+                Directory.CreateDirectory(noDigestBackup);
+                File.WriteAllText(Path.Combine(noDigestBackup, "old.txt"), "old-content");
+                BackupManifestDto noDigest = NewManifest("nodigest", BackupStates.Complete, "2026-01-05T00:00:00Z", noDigestBackup, livePath, null, TreeDigest.Compute(livePath));
+                BackupManifestStore.Write(noDigestDirectory, noDigest);
+
+                SyncRunResult noDigestRun = RollbackEngine.Run(options);
+                context.Expect(noDigestRun.ExitCode == ExitCodesLocator.Error, "缺 previousDigest → 拒绝回滚", noDigestRun.Status + "/" + noDigestRun.Message);
+                context.Expect(File.Exists(Path.Combine(livePath, "new.txt")), "缺摘要被拒时 live 未被触碰", "touched");
+
+                // d) 备份内容与 previousDigest 不一致
+                string tamperedDirectory = Path.Combine(paths.BackupsRoot, CodexPaths.BackupFolderPrefix + "tampered");
+                string tamperedBackup = Path.Combine(tamperedDirectory, "marketplace.previous");
+                Directory.CreateDirectory(tamperedBackup);
+                File.WriteAllText(Path.Combine(tamperedBackup, "old.txt"), "old-content");
+                ComponentDigestDto expectedOld = TreeDigest.Compute(tamperedBackup);
+                BackupManifestDto tampered = NewManifest("tampered", BackupStates.Complete, "2026-01-06T00:00:00Z", tamperedBackup, livePath, expectedOld, TreeDigest.Compute(livePath));
+                BackupManifestStore.Write(tamperedDirectory, tampered);
+                File.WriteAllText(Path.Combine(tamperedBackup, "old.txt"), "tampered-content");
+
+                SyncRunResult tamperedRun = RollbackEngine.Run(options);
+                context.Expect(tamperedRun.ExitCode == ExitCodesLocator.Error, "备份内容不符 → 拒绝回滚", tamperedRun.Status + "/" + tamperedRun.Message);
+                context.Expect(File.Exists(Path.Combine(livePath, "new.txt")), "内容不符被拒时 live 未被触碰", "touched");
+
+                // e) 未收尾 journal → needs-attention，且不读备份、不动 live
+                JournalDto pending = new JournalDto();
+                pending.OperationId = "leftover";
+                pending.Phase = JournalPhases.CommitStarted;
+                pending.Targets = new List<JournalTargetDto>();
+                JournalStore.Write(paths, pending);
+
+                SyncRunResult blocked = RollbackEngine.Run(options);
+                context.Expect(blocked.ExitCode == ExitCodesLocator.NeedsAttention, "遗留 journal → 退出码 2", blocked.ExitCode.ToString());
+                context.Expect(File.Exists(paths.JournalPath), "遗留 journal 必须保留", paths.JournalPath);
+                context.Expect(File.Exists(Path.Combine(livePath, "new.txt")), "遗留 journal 时 live 未被触碰", "touched");
+            }
+            catch (Exception ex)
+            {
+                context.Expect(false, "rollback/guards 不应抛异常", ex.GetType().Name + ": " + ex.Message);
+            }
+            finally
+            {
+                try { Directory.Delete(root, true); } catch (Exception) { }
+            }
+        }
+
+        private static BackupManifestDto NewManifest(string backupId, string status, string createdUtc,
+            string backupPath, string livePath, ComponentDigestDto previousDigest, ComponentDigestDto digest)
+        {
+            BackupManifestDto manifest = new BackupManifestDto();
+            manifest.BackupId = backupId;
+            manifest.Kind = "sync";
+            manifest.Status = status;
+            manifest.CreatedUtc = createdUtc;
+            manifest.Components = new List<BackupComponentDto>();
+            manifest.NativeHost = new List<BackupNativeHostDto>();
+            BackupComponentDto component = new BackupComponentDto();
+            component.Name = "marketplace";
+            component.LivePath = livePath;
+            component.BackupPath = backupPath;
+            component.ExistedBefore = true;
+            component.State = status == BackupStates.Complete ? BackupStates.Moved : BackupStates.Planned;
+            component.Digest = digest;
+            component.PreviousDigest = previousDigest;
+            manifest.Components.Add(component);
+            return manifest;
         }
 
         private static void NoUpdateCase(TestContext context, string baseDirectory)

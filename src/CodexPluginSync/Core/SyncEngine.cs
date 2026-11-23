@@ -35,9 +35,8 @@ namespace CodexPluginSync.Core
     }
 
     /// <summary>
-    /// `--sync` 的 C# 实现（M1 增量 3 第一步）。
-    /// 已完成：组件集合 + stage 复制（保留 junction）+ SyncTransaction 七阶段 + 摘要校验。
-    /// 未接线（本 build 明确报告）：EFS 开启/恢复、Chrome native host 写入。
+    /// `--sync` 的 C# 实现（M1 增量 3）。
+    /// 组件集合 → stage（保留 junction）→ §8 EFS 预检 → 七阶段事务 → §9.4 native host 钩子。
     /// </summary>
     public static class SyncEngine
     {
@@ -229,7 +228,7 @@ namespace CodexPluginSync.Core
                 {
                     output.WriteLine("Chrome native host：已更新为 " + nativeHost.Reason + "（原目标：" + nativeHost.PreviousTargetPath + "）");
                 }
-                output.WriteLine("注意：本 build 尚未接线 EFS（目录加密状态未改动）。");
+                output.WriteLine("注意：本次未改动备份目录（备份位置见上方）。");
                 output.WriteLine("Desktop 包版本：" + appxVersion);
                 return result;
             }
