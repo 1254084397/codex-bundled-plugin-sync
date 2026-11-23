@@ -17,14 +17,15 @@
 | Chrome native host 只读探测 | `Core/NativeHostProbe.cs`、`Core/PathIdentity.cs` | 真机 + 自测：junction 别名判定为 `ok` |
 | 进程/磁盘/备份/journal/EFS 属性 | `ProcessGuard`、`BackupStore`、`OperationJournal`、`EfsProbe` | 真机快照 + 自测 journal=blocked 分支 |
 | 日志根按操作类型 §6.5 | `Cli/CliRunner.cs`、`Core/Logger.cs` | `--check` 日志落 `%LOCALAPPDATA%\CodexPluginSync\logs`，CodexHome 零写入 |
-| fixture 自测 §16.1 | `Core/Fixture.cs`、`Core/SelfTest.cs` | `--selftest` → 14 cases 全绿（含 `recovery/matrix` 20 条、`transaction/state-io` 12 条断言） |
+| fixture 自测 §16.1 | `Core/Fixture.cs`、`Core/SelfTest.cs` | `--selftest` → 15 cases 全绿（含 `recovery/matrix` 20 条、`transaction/state-io` 12 条、`sync/transaction` 11 条断言） |
 | **§6.6 恢复矩阵（C# 侧首次）** | `Core/RecoveryMatrix.cs` | 纯逻辑：sync 11 行、rollback 5 行、revert 行 + 终态一致性；`--selftest` 的 `recovery/matrix` 用例逐行断言 |
 | **§6.3/§6.4 事务写侧（C#）** | `Core/TransactionState.cs` | `AtomicJsonFile`（临时文件 + `Flush(true)` + `File.Replace`、剥 BOM）、`JournalStore`（seq 写前递增、UTC、可删除）、`BackupManifestStore`（Write + `Validate`：components 为空不得 complete、state=moved 缺 `previousDigest` 直接拒）；`transaction/state-io` 覆盖 |
+| **§7.2 同步事务编排（C#）** | `Core/SyncTransaction.cs`、`Core/TreeDigest.cs` | Planned → BackupCreated → Staged → Verified → CommitStarted → Committed → Finalized 全阶段写 journal；CommitStarted 之后失败自动 Revert 并逐组件比摘要；stage 缺失时在动 live 之前中止。**纯编排**：不含 robocopy/EFS/native host（由调用方在 Staged 前完成），CLI 尚未接入 |
 
 ## 实测结果（本机）
 
 ```text
---selftest                      → SELFTEST PASS (14 cases)   ← 2026-11-24 构建后实测
+--selftest                      → SELFTEST PASS (15 cases)   ← 2026-11-24 构建后实测
 --check（真机）                  → Verdict: ok, Update needed: No, exit 0
 --check --json（stderr 丢弃）     → 单行 JSON 可解析，exitCode=2 时与进程退出码一致
 --bogus                         → exit 1

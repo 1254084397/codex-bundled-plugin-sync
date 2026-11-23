@@ -186,6 +186,7 @@ namespace CodexPluginSync.Tests
                 JunctionEquivalenceCase(context, baseDirectory);
                 RecoveryMatrixCase(context);
                 TransactionStateCase(context);
+                SyncTransactionCase(context);
                 ArgumentParsingCase(context);
             }
             finally
@@ -492,6 +493,83 @@ namespace CodexPluginSync.Tests
                 catch (Exception)
                 {
                 }
+            }
+        }
+
+        /// <summary>
+        /// §7.2 同步事务：happy path 与“stage 缺失在动 live 之前中止”两个分支（纯 fixture 目录）。
+        /// </summary>
+        private static void SyncTransactionCase(TestContext context)
+        {
+            context.Begin("sync/transaction");
+
+            string root = Path.Combine(Path.GetTempPath(), "CodexPluginSync-sync-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                CodexPaths paths = new CodexPaths(root);
+                string livePath = Path.Combine(root, "plugins", "cache", "openai-bundled", "browser");
+                string stagePath = Path.Combine(root, "plugins", "cache", "openai-bundled", "browser.stage-test");
+                string backupDirectory = Path.Combine(paths.BackupsRoot, "openai-bundled-sync-test");
+                string backupPath = Path.Combine(backupDirectory, "cache-browser.previous");
+
+                Directory.CreateDirectory(livePath);
+                File.WriteAllText(Path.Combine(livePath, "old.txt"), "old");
+                Directory.CreateDirectory(stagePath);
+                File.WriteAllText(Path.Combine(stagePath, "new.txt"), "new");
+
+                List<SyncTarget> targets = new List<SyncTarget>();
+                SyncTarget target = new SyncTarget();
+                target.Component = "cache:browser";
+                target.LivePath = livePath;
+                target.StagePath = stagePath;
+                target.BackupPath = backupPath;
+                target.ExistedBefore = true;
+                targets.Add(target);
+
+                SyncTransactionResult committed = SyncTransaction.Execute(paths, backupDirectory, "txn-happy", targets);
+                context.Expect(committed.Status == SyncTransaction.StatusCommitted, "happy path 终态 committed", committed.Status + "/" + committed.Message);                context.Expect(File.Exists(Path.Combine(livePath, "new.txt")) && !File.Exists(Path.Combine(livePath, "old.txt")),
+                    "live 已换成新内容", "live=" + string.Join(",", Directory.GetFiles(livePath)));
+                context.Expect(File.Exists(Path.Combine(backupPath, "old.txt")), "备份保留同步前内容", backupPath);
+                context.Expect(!File.Exists(paths.JournalPath), "事务结束后 journal 已删除", paths.JournalPath);
+
+                BackupManifestDto manifest = JsonRead.FromFile<BackupManifestDto>(Path.Combine(backupDirectory, BackupManifestStore.FileName));
+                context.Expect(manifest != null && manifest.Status == BackupStates.Complete, "backup.json status=complete", manifest == null ? "null" : manifest.Status);
+                context.Expect(manifest != null && manifest.Components != null && manifest.Components.Count == 1 &&
+                    manifest.Components[0].PreviousDigest != null && manifest.Components[0].Digest != null,
+                    "backup.json 记录 previousDigest 与 digest",
+                    manifest == null || manifest.Components == null ? "null" : manifest.Components.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                context.Expect(manifest != null && !TreeDigest.Equal(manifest.Components[0].PreviousDigest, manifest.Components[0].Digest),
+                    "同步前后摘要不同（确认真的换了内容）", "equal");
+
+                // 第二段：stage 缺失 → 在动 live 之前中止，live 与备份目录都不被写入
+                string live2 = Path.Combine(root, @"plugins\cache\openai-bundled\chrome");
+                Directory.CreateDirectory(live2);
+                File.WriteAllText(Path.Combine(live2, "keep.txt"), "keep");
+                string backup2 = Path.Combine(paths.BackupsRoot, "openai-bundled-sync-test2");
+
+                List<SyncTarget> badTargets = new List<SyncTarget>();
+                SyncTarget bad = new SyncTarget();
+                bad.Component = "cache:chrome";
+                bad.LivePath = live2;
+                bad.StagePath = Path.Combine(root, "does-not-exist.stage");
+                bad.BackupPath = Path.Combine(backup2, "cache-chrome.previous");
+                bad.ExistedBefore = true;
+                badTargets.Add(bad);
+
+                SyncTransactionResult aborted = SyncTransaction.Execute(paths, backup2, "txn-abort", badTargets);
+                context.Expect(aborted.Status == SyncTransaction.StatusAborted, "stage 缺失 → aborted", aborted.Status + "/" + aborted.Message);
+                context.Expect(File.Exists(Path.Combine(live2, "keep.txt")), "中止时 live 未被移动", live2);
+                context.Expect(!Directory.Exists(Path.Combine(backup2, "cache-chrome.previous")), "中止时未产生备份副本", backup2);
+                context.Expect(!File.Exists(paths.JournalPath), "中止后 journal 已清理", paths.JournalPath);
+            }
+            catch (Exception ex)
+            {
+                context.Expect(false, "sync/transaction 不应抛异常", ex.GetType().Name + ": " + ex.Message + " @ " + ex.StackTrace);
+            }
+            finally
+            {
+                try { Directory.Delete(root, true); } catch (Exception) { }
             }
         }
 

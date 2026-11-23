@@ -228,9 +228,10 @@ E/F 是“显式 `-Scratch` 不得代建父目录”这条修正的专项回归�
 - **D-01**（marketplace 父目录是否该长期加密）仍待结论；当前实现只撤销本次自己的开启。
 - **Codex 是否会自己重建 `chrome\latest`**：同步后新缓存来自 AppX 源包（不含该 junction），
   下次启动 Codex Desktop 时需确认它是否重建别名（目前清单指向版本目录，不依赖别名）。
-- C# 侧（`src/CodexPluginSync`）**已开始接管并已验证部分能力**：
-  `Core/RecoveryMatrix.cs`（§6.6 矩阵）、`Core/TransactionState.cs`（backup.json 的 `digest`/`previousDigest`、
-  journal 写侧、完成判据）已落地并通过 `--selftest`（14 cases）；`--sync` / `--rollback` 本体仍未实现，
+- C# 侧（`src/CodexPluginSync`）**已接管并已验证部分能力**：
+  `Core/RecoveryMatrix.cs`（§6.6 矩阵）、`Core/TransactionState.cs`（backup.json/journal 写侧）、
+  `Core/SyncTransaction.cs` + `Core/TreeDigest.cs`（§7.2 七阶段编排、CommitStarted 后自动 Revert）
+  已通过 `--selftest`（15 cases）。仍未做：CLI 接入 `--sync`/`--rollback`、robocopy/EFS/native host 的真实 IO、
   `docs/M1-STATUS.md` 的“未实现”表仍然有效。
 - 运行约束（与本次验收不矛盾）：**后续再次执行写入操作**时仍需先关闭 Chrome / Edge / Codex Desktop，
   否则进程守卫会拒绝写入（设计行为）。**本次**真机验收已在彻底退出这些进程后完成，详见 §8。
