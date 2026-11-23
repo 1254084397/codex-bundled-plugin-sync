@@ -197,6 +197,7 @@ namespace CodexPluginSync.Tests
                 CleanupRetentionCase(context, baseDirectory);
                 RecoveryExecuteCase(context, baseDirectory);
                 EfsCopyCase(context, baseDirectory);
+                DigestJunctionCase(context, baseDirectory);
                 DiagRedactionCase(context, baseDirectory);
                 ArgumentParsingCase(context);
             }
@@ -1417,6 +1418,74 @@ namespace CodexPluginSync.Tests
             catch (Exception ex)
             {
                 context.Expect(false, "recovery/execute 不应抛异常", ex.GetType().Name + ": " + ex.Message);
+            }
+            finally
+            {
+                try { Directory.Delete(root, true); } catch (Exception) { }
+            }
+        }
+
+        /// <summary>
+        /// 真机回归（2026-11-24）：树摘要不得跟进 reparse point。
+        /// 备份里的 `latest` junction 指回 live，若摘要跟随它，交换后备份摘要就变了，回滚必然拒绝。
+        /// 这里造一份“真目录 + junction 指回真目录”，断言只数一遍文件，且 copy 前后摘要一致。
+        /// </summary>
+        private static void DigestJunctionCase(TestContext context, string baseDirectory)
+        {
+            context.Begin("digest/no-junction-walk");
+
+            string root = Path.Combine(baseDirectory, "digest-junction");
+            string version = Path.Combine(root, "26.1.0");
+            try
+            {
+                Directory.CreateDirectory(version);
+                File.WriteAllText(Path.Combine(version, "a.txt"), "a");
+                File.WriteAllText(Path.Combine(version, "b.txt"), "b");
+
+                string latest = Path.Combine(root, "latest");
+                bool linked = false;
+                try
+                {
+                    System.Diagnostics.ProcessStartInfo startInfo = new System.Diagnostics.ProcessStartInfo();
+                    startInfo.FileName = "cmd.exe";
+                    startInfo.Arguments = "/c mklink /J \"" + latest + "\" \"" + version + "\"";
+                    startInfo.CreateNoWindow = true;
+                    startInfo.UseShellExecute = false;
+                    startInfo.RedirectStandardOutput = true;
+                    startInfo.RedirectStandardError = true;
+                    using (System.Diagnostics.Process process = System.Diagnostics.Process.Start(startInfo))
+                    {
+                        process.StandardOutput.ReadToEnd();
+                        process.StandardError.ReadToEnd();
+                        process.WaitForExit();
+                        linked = process.ExitCode == 0 && Directory.Exists(latest);
+                    }
+                }
+                catch (Exception)
+                {
+                    linked = false;
+                }
+                if (!linked)
+                {
+                    context.Expect(true, "无法建 junction，记为 skip", "skipped");
+                    return;
+                }
+
+                ComponentDigestDto digest = TreeDigest.Compute(root);
+                context.Expect(digest != null && digest.FileCount == 2,
+                    "junction 不被递归（只数 2 个真实文件）",
+                    digest == null ? "null" : digest.FileCount.ToString());
+
+                string copy = Path.Combine(baseDirectory, "digest-junction-copy");
+                Installer.CopyTreePreservingLinks(root, copy);
+                context.Expect(TreeDigest.Equal(digest, TreeDigest.Compute(copy)),
+                    "带 junction 的树 copy 前后摘要一致",
+                    "mismatch");
+                try { Directory.Delete(copy, true); } catch (Exception) { }
+            }
+            catch (Exception ex)
+            {
+                context.Expect(false, "digest/no-junction-walk 不应抛异常", ex.GetType().Name + ": " + ex.Message);
             }
             finally
             {

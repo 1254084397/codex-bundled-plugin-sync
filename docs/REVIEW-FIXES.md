@@ -237,9 +237,13 @@ E/F 是“显式 `-Scratch` 不得代建父目录”这条修正的专项回归�
 - 真机写入演练（2026-11-24）：撞到并修好三个 bug（EFS 源文件复制报 6000、写入路径未调进程守卫、
   Revert 把未交换组件当失败），详见 `docs/M1-STATUS.md`。真机上也因此实打实验证了
   “失败 → 自动 Revert → live 回到同步前内容”与“遗留 journal 按 §6.6 row 2 收尾”。
-- **`--sync` / `--rollback` 的真机成功路径仍未验收**：`extension-host` 由 Codex app-server daemon 监督重生，
-  锁住 `cache\chrome` 使目录 rename 被拒；本次演练在“守卫正确拒绝”这一步结束。
-  要完成需先停 daemon（不是仅关 Chrome），否则不该宣称真机写入已经验过。
+- **真机写入演练（2026-11-24）已验收**：`--sync --force` committed、`--rollback` rolled-back（四组件摘要校验 + 安全快照校验通过）、
+  commit-started 强杀后恢复器收尾、`--cleanup-only` 真删 12 项。详见 `docs/M1-STATUS.md`。
+  撞到并修好四个 bug：EFS 加密源文件复制报 6000、写入路径未调进程守卫、Revert 误判未交换组件、
+  **`TreeDigest` 跟进 junction**（chrome 158→316，导致回滚夹具摘要必失败）。
+- 仍未真机验证：§6.6 行 4/8/11（交换中途 live 缺失/内容不可识别）——毫秒级窗口，目前只由 fixture `recovery/execute` 覆盖。
+- native host：真机 `--sync` 把清单从 `chrome\latest\…` 改为 `chrome\26.1117.41037\…`（hash `2980548C…` → `ABAE83BC…`），
+  `--check` 报 `ok`；这是预期的“指向版本目录”而非漂移。
 - 回滚与清理的**真机写入**验收尚未做：C# 侧只在临时目录与 fixture 上验证过
   （`rollback/restore`、`rollback/roundtrip`、`rollback/guards`、`cleanup/retention`）；
   真机上只跑了 `--cleanup-only --dry-run`（114 项计划，未删任何东西）。脚本层的真机演练见 §8，两者不能互相代替。
