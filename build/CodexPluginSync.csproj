@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Release</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{8C1F0F1E-5A3B-4C2D-9E11-9A0C6B7D5E21}</ProjectGuid>
+    <!-- M1 is a console build: the WinForms entry point (M3) will switch this to WinExe. -->
+    <OutputType>Exe</OutputType>
+    <RootNamespace>CodexPluginSync</RootNamespace>
+    <AssemblyName>CodexPluginSync</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <TargetFrameworkProfile />
+    <BaseIntermediateOutputPath>obj\</BaseIntermediateOutputPath>
+    <IntermediateOutputPath>obj\$(Configuration)\</IntermediateOutputPath>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <DebugType>none</DebugType>
+    <Optimize>true</Optimize>
+    <LangVersion>5</LangVersion>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <ApplicationManifest>..\src\CodexPluginSync\App.manifest</ApplicationManifest>
+    <WarningLevel>4</WarningLevel>
+    <DefineConstants>TRACE</DefineConstants>
+    <NoWarn>1591</NoWarn>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Runtime.Serialization" />
+    <Reference Include="System.Xml" />
+    <!-- 本机没有 .NET Framework 4.8 targeting pack 时，内置 MSBuild 会回退到运行时目录的
+         mscorlib 并把标记为 CopyLocal，导致输出目录里出现 mscorlib.dll 与 *.nlp。
+         显式声明为非私有引用，保证“发布目录只有 1 个 exe”（§4.3/§15）。 -->
+    <Reference Include="mscorlib">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\src\CodexPluginSync\**\*.cs" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <!-- §15 构建断言：发布目录必须只有 1 个 exe，否则构建失败。 -->
+  <Target Name="AssertSingleFileOutput" AfterTargets="Build">
+    <ItemGroup>
+      <AllBuildOutputs Include="$(OutputPath)**\*" />
+      <ExpectedBuildOutput Include="$(OutputPath)$(AssemblyName).exe" />
+      <UnexpectedBuildOutput Include="@(AllBuildOutputs)" Exclude="@(ExpectedBuildOutput)" />
+    </ItemGroup>
+    <Error Condition="'@(UnexpectedBuildOutput)' != ''"
+           Text="发布目录必须只有 $(AssemblyName).exe，实际多出：@(UnexpectedBuildOutput)" />
+  </Target>
+</Project>
