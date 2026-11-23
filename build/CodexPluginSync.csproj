@@ -28,6 +28,8 @@
     <Reference Include="System.Core" />
     <Reference Include="System.IO.Compression" />
     <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.Xml" />
     <!-- 本机没有 .NET Framework 4.8 targeting pack 时，内置 MSBuild 会回退到运行时目录的

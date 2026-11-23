@@ -85,6 +85,33 @@ namespace CodexPluginSync.Core
             return state;
         }
 
+        /// <summary>
+        /// 探测本卷是否支持 EFS：在目标目录下建一个临时子目录试开启，用完删掉。
+        /// 用于“别人的机器不支持 EFS”时优雅降级——不把环境限制当成同步失败。
+        /// </summary>
+        public static bool SupportsEfs(string path)
+        {
+            if (string.IsNullOrEmpty(path)) { return false; }
+            string probe = Path.Combine(path, ".efs-probe-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            try
+            {
+                if (!Directory.Exists(path)) { Directory.CreateDirectory(path); }
+                Directory.CreateDirectory(probe);
+                if (!SetEncrypted(probe, true)) { return false; }
+                SetEncrypted(probe, false);
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+            finally
+            {
+                try { if (Directory.Exists(probe)) { SetEncrypted(probe, false); Directory.Delete(probe, true); } }
+                catch (Exception) { }
+            }
+        }
+
         /// <summary>收尾：只撤销本次自己的开启；读不到属性即视为未恢复。</summary>
         public static EfsRestoreResult Restore(EfsState state)
         {

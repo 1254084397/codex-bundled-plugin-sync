@@ -188,8 +188,22 @@ namespace CodexPluginSync.Core
                 {
                     if (!options.SkipEfs)
                     {
-                        efsState = Efs.PrepareForWrite(paths.MarketParent);
-                        result.Lines.Add("EFS：preEncrypted=" + efsState.PreEncrypted + "，enabledByThisRun=" + efsState.EnabledByThisRun);
+                        try
+                        {
+                            efsState = Efs.PrepareForWrite(paths.MarketParent);
+                            result.Lines.Add("EFS：preEncrypted=" + efsState.PreEncrypted + "，enabledByThisRun=" + efsState.EnabledByThisRun);
+                        }
+                        catch (Exception efsError)
+                        {
+                            // 别人的机器可能根本不支持 EFS（FAT32/exFAT、组策略禁用等）。
+                            // 那是环境限制，不是同步失败：说清楚然后继续，不静默。
+                            if (Efs.SupportsEfs(paths.MarketParent))
+                            {
+                                throw;
+                            }
+                            efsState = null;
+                            result.Lines.Add("EFS：本卷不支持 EFS，跳过加密（不影响内容正确性）—— " + efsError.Message);
+                        }
                     }
 
                 if (options.SkipNativeHost || string.IsNullOrEmpty(chromeVersion))

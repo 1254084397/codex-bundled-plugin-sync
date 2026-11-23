@@ -44,37 +44,51 @@ The AppX bundle can contain plugins that are not part of the persistent Marketpl
 
 ### Quick start
 
-1. Close Codex Desktop, ChatGPT, Chrome, and Edge.
-2. Download or clone this repository.
-3. Run the read-only check:
+Double-click `CodexPluginSync.exe` — that opens the window shown below. Press **检查** to see the current state (nothing is written), then **同步** if it says an update is needed. Both write actions ask for confirmation first.
+
+![主界面](docs/screenshots/gui-main.png)
+
+Prefer the command line? Same exe, same behaviour:
+
+1. Close Codex Desktop, ChatGPT, Chrome, and Edge (and any browser that loads the Codex extension — see *What blocks a sync* below).
+2. Run the read-only check:
 
    ```bat
-   sync-codex-bundled.cmd --check
+   CodexPluginSync.exe --check
    ```
 
-4. If the check reports `Update needed: Yes`, run:
+3. If the check reports `Update needed: Yes`, run:
 
    ```bat
-   sync-codex-bundled.cmd --sync
+   CodexPluginSync.exe --sync
    ```
 
-5. Restart Codex Desktop after a successful synchronization.
+4. Restart Codex Desktop after a successful synchronization.
 
-The wrapper defaults to `%USERPROFILE%\CodexHome`. To use another location:
+Both entry points resolve `CodexHome` the same way. To use another location:
 
 ```bat
 set CODEX_HOME=E:\CodexHome
-sync-codex-bundled.cmd --check
+CodexPluginSync.exe --check
 ```
+
+> The legacy `sync-codex-bundled.cmd` wrapper still works and still defaults to “sync” with no arguments. The PowerShell scripts under `scripts/` remain as a reference implementation and for scheduled tasks.
+
+### What blocks a sync
+
+The sync replaces whole directories, so anything holding a file inside them must be closed first. In practice that is not only Chrome/Edge: the Codex browser extension's `extension-host.exe` is started by whichever Chromium browser loads the extension, and some Codex helper processes restart it automatically. If a sync is refused with `检测到会锁住插件目录的进程`, close the listed program (or add its process name to `extraLockingProcesses` in `%LOCALAPPDATA%\CodexPluginSync\settings.json`) and retry. The tool refuses before writing anything, and a failed run reverts automatically.
 
 ### Commands
 
 | Command | Purpose | Writes plugin files? |
 | --- | --- | :---: |
+| *(no arguments)* | Open the GUI | No |
 | `--check` | Show Desktop, Marketplace, cache, disk, and process status | No |
 | `--sync` | Synchronize Marketplace and managed caches | Yes |
-| `--cleanup-only` | Remove old backups, stages, and logs | No plugin changes |
-| `--rollback` | Restore the newest completed synchronization backup | Yes |
+| `--rollback [--backup <id>]` | Restore a completed synchronization backup (newest by default) | Yes |
+| `--cleanup-only [--dry-run]` | Remove old backups, stages, and logs | No plugin changes |
+| `--export-diag [--out <path>] [--no-redact]` | Write a redacted diagnostic zip | No |
+| `--selftest` | Run the built-in fixture suite | No (temp dirs only) |
 | `--help` | Print command help | No |
 
 The PowerShell scripts can also be called directly and accept `-Root`:
@@ -109,9 +123,17 @@ The next milestone turns this into a **single-exe distribution** with a GUI: one
 | M0 | Freeze contracts: state machine, backup model, exit codes, JSON schema, recovery, EFS/native-host/redaction boundaries | `docs/DESIGN.md` v0.2 agreed |
 | M1 | Headless core + selftest: paths, check, sync, rollback, cleanup, journal, backup store, hasher | `--selftest` green on the fixture suite |
 | M2 | CLI compatibility layer: arguments, exit codes, `--json`, `.cmd` calls the exe (mapping `2` back to `0`) | Existing scheduled tasks keep working |
-| M3 | WinForms UI: sync, backups, logs, recovery state | Full sync and rollback through the GUI |
+| M3 | WinForms UI: status screen, sync/rollback/cleanup/diagnostics buttons, log pane | **Done for the first increment** — full sync and rollback work through the GUI |
 | M4 | Tray icon and scheduled checks (off by default) | Resident mode does not disturb the core |
 | M5 | Real Windows acceptance, build/CI, README rewrite | v1.0 |
+
+Build a release zip for someone else:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build\package.ps1
+```
+
+That builds, refuses to package unless `--selftest` is green, and writes `dist\CodexPluginSync-<version>.zip` (exe + README + LICENSE).
 
 Design notes worth knowing now:
 
@@ -126,14 +148,22 @@ Design notes worth knowing now:
 
 ```text
 .
-├── sync-codex-bundled.cmd
-├── scripts/
-│   ├── check-openai-bundled.ps1
-│   ├── cleanup-openai-bundled.ps1
-│   ├── rollback-openai-bundled.ps1
-│   └── sync-openai-bundled.ps1
+├── src/CodexPluginSync/
+│   ├── Program.cs            入口：无参数→GUI，带参数→CLI
+│   ├── Cli/                  参数、退出码、报告输出
+│   ├── Core/                 检查、同步事务、回滚、清理、恢复矩阵、EFS、日志
+│   └── Gui/                  WinForms 主界面
+├── build/
+│   ├── CodexPluginSync.csproj
+│   └── package.ps1           构建 + 自检 + 打 zip
+├── scripts/                  legacy PowerShell 实现（对照与计划任务用）
 ├── docs/
-│   └── DESIGN.md
+│   ├── DESIGN.md             契约
+│   ├── M1-STATUS.md          已实现/未实现（实测口径）
+│   ├── REVIEW-FIXES.md       审查与真机事故记录
+│   └── screenshots/
+├── tests/                    PowerShell fixture 与 EFS 验收
+├── sync-codex-bundled.cmd
 ├── LICENSE
 └── README.md
 ```
@@ -184,9 +214,17 @@ Codex Desktop 的内置插件装在 AppX 包里，运行时却从 `CodexHome` �
 | M0 | 冻结契约：状态机、备份模型、退出码、JSON schema、恢复策略、EFS/注册表/脱敏边界 | `docs/DESIGN.md` v0.2 定稿 |
 | M1 | 无界面 Core + selftest：路径、检查、同步、回滚、清理、journal、备份存储、哈希 | `--selftest` 在 fixture 上全绿 |
 | M2 | CLI 兼容层：参数、退出码、`--json`、`.cmd` 改为调用 exe（并把 `2` 映射回 `0`） | 旧计划任务不中断 |
-| M3 | WinForms 主界面：同步、备份、日志、恢复状态 | 能通过界面完成同步与回滚 |
+| M3 | WinForms 主界面：状态、同步/回滚/清理/诊断按钮、日志区 | **首个增量已完成**：能在界面上完成同步与回滚 |
 | M4 | 托盘与定时检查（默认关闭） | 常驻不干扰 Core |
 | M5 | 真机验收、构建/CI、README 重写 | v1.0 |
+
+给别人用的发布包：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build\package.ps1
+```
+
+它会先构建、自检不过就拒绝打包，最后生成 `dist\CodexPluginSync-<版本>.zip`（exe + README + LICENSE）。
 
 现在就该知道的几个设计点：
 
@@ -199,10 +237,16 @@ Codex Desktop 的内置插件装在 AppX 包里，运行时却从 `CodexHome` �
 
 ### 快速使用
 
-先关闭 Codex Desktop、ChatGPT、Chrome 和 Edge，然后运行：
+双击 `CodexPluginSync.exe` 就是界面：先点 **检查**（只读，不写任何东西），需要更新时再点 **同步**。两个写操作都会先弹确认框。
+
+![主界面](docs/screenshots/gui-main.png)
+
+也可以用命令行（同一个 exe、同一套行为）：
+
+先关闭 Codex Desktop、ChatGPT、Chrome 和 Edge（以及任何加载了 Codex 扩展的浏览器，见下方“什么会阻止同步”），然后：
 
 ```bat
-sync-codex-bundled.cmd --check
+CodexPluginSync.exe --check
 ```
 
 如果输出：
@@ -214,23 +258,25 @@ Update needed: Yes
 再运行：
 
 ```bat
-sync-codex-bundled.cmd --sync
+CodexPluginSync.exe --sync
 ```
 
 同步成功后重新启动 Codex Desktop。
 
-默认目录是：
-
-```text
-%USERPROFILE%\CodexHome
-```
-
-也可以指定自定义目录：
+默认目录是 `%USERPROFILE%\CodexHome`，也可以指定：
 
 ```bat
 set CODEX_HOME=E:\CodexHome
-sync-codex-bundled.cmd --check
+CodexPluginSync.exe --check
 ```
+
+> 旧的 `sync-codex-bundled.cmd` 仍然可用，无参数依旧是“同步”；`scripts/` 下的 PowerShell 实现保留为对照与计划任务入口。
+
+### 什么会阻止同步
+
+同步是整目录替换，所以只要有人拿着这些目录里的文件就必须先关掉。实践中不只是 Chrome/Edge：Codex 浏览器扩展的 `extension-host.exe` 由**加载该扩展的任意 Chromium 浏览器**拉起，某些 Codex 辅助进程还会把它重启。
+
+如果同步被拒绝并提示 `检测到会锁住插件目录的进程`，把列出的程序关掉（或把进程名加进 `%LOCALAPPDATA%\CodexPluginSync\settings.json` 的 `extraLockingProcesses`）再试。工具会在**写入之前**拒绝，失败运行会自动回退。
 
 ### 安全设计
 
