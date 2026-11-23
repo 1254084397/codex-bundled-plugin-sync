@@ -27,13 +27,18 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $repoRoot 'scripts\lib\CodexPluginSync.Common.ps1')
 
 $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME 'CodexHome' }
-if ([string]::IsNullOrWhiteSpace($Scratch)) {
-    $Scratch = Join-Path $PSScriptRoot '.work\efs-acceptance'
+$workRoot = Join-Path $PSScriptRoot '.work'
+
+# 每次运行都用一个新的随机目录：绝不复用、绝不删除已存在的目录（避免删掉保留的现场或用户文件）。
+$explicitScratch = -not [string]::IsNullOrWhiteSpace($Scratch)
+if (-not $explicitScratch) {
+    $Scratch = Join-Path $workRoot ('efs-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 }
 
 $failures = New-Object 'System.Collections.Generic.List[string]'
 $cleanupOk = $true
 $created = $false
+$scratchIdentity = $null
 
 function Assert-True {
     param([bool]$Condition, [Parameter(Mandatory)][string]$Message)
@@ -50,14 +55,21 @@ Write-Host ("scratch = {0}" -f $Scratch)
 Write-Host ("CODEX_HOME（禁止触碰） = {0}" -f $codexHome)
 
 try {
-    # ---- 边界检查 --------------------------------------------------------
+    # ---- 边界检查（路径词法 + 解析后真实路径双重校验）------------------
     $resolvedScratch = [System.IO.Path]::GetFullPath($Scratch)
-    if (Test-CodexSyncPathUnder -Path $resolvedScratch -Parent $repoRoot) {
-        Write-Host '  ok   目标位于工作区内' -ForegroundColor Green
-    } else {
-        Write-Host '  ABORT 目标不在工作区内，拒绝执行' -ForegroundColor Red
+    $parent = Split-Path -Parent $resolvedScratch
+    if (-not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+    $parentFinal = Resolve-CodexSyncFinalPath -Path $parent
+    $repoFinal = Resolve-CodexSyncFinalPath -Path $repoRoot
+    if ($null -eq $parentFinal -or $null -eq $repoFinal -or
+        -not (Test-CodexSyncPathUnder -Path $parentFinal -Parent $repoFinal)) {
+        Write-Host "  ABORT 父目录解析后的真实路径不在工作区内：$parentFinal" -ForegroundColor Red
         exit 1
     }
+    Write-Host '  ok   目标父目录（真实路径）位于工作区内' -ForegroundColor Green
+
     if (Test-Path -LiteralPath $codexHome) {
         $resolvedCodexHome = (Resolve-Path -LiteralPath $codexHome).Path
         if (Test-CodexSyncPathUnder -Path $resolvedScratch -Parent $resolvedCodexHome) {
@@ -66,11 +78,26 @@ try {
         }
     }
 
+    # 已存在的目录一律拒绝：不复用、不递归删除。
     if (Test-Path -LiteralPath $resolvedScratch) {
-        Remove-Item -LiteralPath $resolvedScratch -Recurse -Force
+        Write-Host "  ABORT 目标已存在，拒绝复用或删除：$resolvedScratch" -ForegroundColor Red
+        exit 1
     }
-    New-Item -ItemType Directory -Path $resolvedScratch -Force | Out-Null
+
+    New-Item -ItemType Directory -Path $resolvedScratch -ErrorAction Stop | Out-Null
     $created = $true
+    $scratchIdentity = Resolve-CodexSyncFinalPath -Path $resolvedScratch
+    if ([bool]((Get-Item -LiteralPath $resolvedScratch -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        Write-Host '  ABORT 新建目标竟是 reparse point，停止' -ForegroundColor Red
+        $created = $false
+        exit 1
+    }
+    if ($null -eq $scratchIdentity -or -not (Test-CodexSyncPathUnder -Path $scratchIdentity -Parent $repoFinal)) {
+        Write-Host "  ABORT 新建目标的真实路径不在工作区内：$scratchIdentity" -ForegroundColor Red
+        $created = $false
+        exit 1
+    }
+    Write-Host '  ok   已创建本次专用临时目录，身份已登记' -ForegroundColor Green
     Set-Content -LiteralPath (Join-Path $resolvedScratch 'plain.txt') -Value 'plain' -Encoding ascii
 
     $drive = (Get-Item -LiteralPath $resolvedScratch).PSDrive.Name
@@ -139,16 +166,26 @@ finally {
     Write-Host '--- 清理'
     if ($created -and (Test-Path -LiteralPath $Scratch)) {
         try {
-            $still = Get-CodexSyncPathEncrypted -Path $Scratch
-            if ($still) { $null = & cipher /d $Scratch 2>&1 }
-            $finalEnc = Get-CodexSyncPathEncrypted -Path $Scratch
-            if ($finalEnc) { $cleanupOk = $false; Write-Host '  清理警告：目录仍处于加密状态' -ForegroundColor Yellow }
-            if ($KeepWork) {
-                Write-Host ("  保留现场：{0}" -f $Scratch)
+            # 只删除“本次创建且身份可确认”的目录：真实路径未变、且不是 reparse point。
+            $currentIdentity = $null
+            try { $currentIdentity = Resolve-CodexSyncFinalPath -Path $Scratch } catch { $currentIdentity = $null }
+            $isReparse = [bool]((Get-Item -LiteralPath $Scratch -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+            if ($null -eq $currentIdentity -or $isReparse -or $currentIdentity -ne $scratchIdentity) {
+                $cleanupOk = $false
+                Write-Host '  清理警告：目录身份与本次创建的不一致，未删除（保留现场供人工查看）' -ForegroundColor Yellow
+                Write-Host ("    expected={0} actual={1} reparse={2}" -f $scratchIdentity, $currentIdentity, $isReparse)
             } else {
-                Remove-Item -LiteralPath $Scratch -Recurse -Force
-                if (Test-Path -LiteralPath $Scratch) { $cleanupOk = $false; Write-Host '  清理警告：目录未能删除' -ForegroundColor Yellow }
-                else { Write-Host '  已解密并删除临时目录' -ForegroundColor Green }
+                $still = Get-CodexSyncPathEncrypted -Path $Scratch
+                if ($still) { $null = & cipher /d $Scratch 2>&1 }
+                $finalEnc = Get-CodexSyncPathEncrypted -Path $Scratch
+                if ($finalEnc) { $cleanupOk = $false; Write-Host '  清理警告：目录仍处于加密状态' -ForegroundColor Yellow }
+                if ($KeepWork) {
+                    Write-Host ("  保留现场：{0}" -f $Scratch)
+                } else {
+                    Remove-Item -LiteralPath $Scratch -Recurse -Force
+                    if (Test-Path -LiteralPath $Scratch) { $cleanupOk = $false; Write-Host '  清理警告：目录未能删除' -ForegroundColor Yellow }
+                    else { Write-Host '  已解密并删除本次创建的临时目录' -ForegroundColor Green }
+                }
             }
         } catch {
             $cleanupOk = $false

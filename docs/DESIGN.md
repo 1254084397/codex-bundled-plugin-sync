@@ -788,7 +788,15 @@ Finalized    处理 native host（含 §9.4 存在性位）→ 删除 journal �
 5 收尾：若 enabledByThisRun → cipher /d <stagingParent>，恢复 preEncrypted，
          记 journal(efs.restoredUtc)
 6 若恢复失败 → 不静默：日志 ERROR + 结果条提示"目录加密状态未恢复"，给出原状态与当前状态
+7 【v0.4】恢复成功的判据是状态，不是退出码：cipher 退出码 0 不足以证明恢复成功
+  （实测：cipher /d 对不存在的路径仍返回 0）。必须重新读取 Encrypted 属性并与
+  preEncrypted 比对；读不到属性或值不相等 → 一律 needs-attention，不得记为已恢复
 ```
+
+**成功判据（v0.4 新增）**：任何 EFS 动作的"成功"只能由**重新读取的属性值**定义，
+不得由 `cipher` 的退出码推断。读取失败（路径消失、权限不足、属性不可读）等同于恢复失败，
+终态为 `needs-attention`，日志必须同时记录 `preEncrypted` 与当前可观察值（或“不可观察”）。
+脚本层实现见 `Restore-CodexSyncEfsState`，验收脚本见 `tests/efs-acceptance.ps1`。
 
 **探测目录的副作用契约（v0.3 新增）**：
 
