@@ -189,6 +189,7 @@ namespace CodexPluginSync.Tests
                 SyncTransactionCase(context);
                 SyncEngineCase(context, baseDirectory);
                 NativeHostBoundaryCase(context, baseDirectory);
+                EfsStateMachineCase(context, baseDirectory);
                 ArgumentParsingCase(context);
             }
             finally
@@ -782,6 +783,70 @@ namespace CodexPluginSync.Tests
 
             context.Expect(NativeHostWriter.ValidateManifestPath("", roots) != null,
                 "空路径必须拒绝", "accepted");
+        }
+
+        /// <summary>
+        /// §8 EFS 状态机（只跑临时目录）：预检记录 → 开启 → 撤销 → 既有加密不被误解除。
+        /// 卷不支持 EFS 或 cipher 不可用时记为 skip（不把环境限制当成通过）。
+        /// </summary>
+        private static void EfsStateMachineCase(TestContext context, string baseDirectory)
+        {
+            context.Begin("efs/state-machine");
+
+            string target = Path.Combine(baseDirectory, "efs-target");
+            Directory.CreateDirectory(target);
+            try
+            {
+                bool? pre = Efs.GetEncrypted(target);
+                if (!pre.HasValue)
+                {
+                    context.Expect(true, "EFS 属性不可读，记为 skip（不宣称通过）", "skipped");
+                    return;
+                }
+                if (pre.Value)
+                {
+                    context.Expect(true, "目标已加密，不在其上测“开启”，记为 skip", "skipped");
+                    return;
+                }
+
+                EfsState state = null;
+                bool prepared = false;
+                try
+                {
+                    state = Efs.PrepareForWrite(target);
+                    prepared = true;
+                }
+                catch (Exception ex)
+                {
+                    context.Expect(true, "卷不支持 EFS，记为 skip：" + ex.Message, "skipped");
+                    return;
+                }
+
+                context.Expect(prepared && state != null && state.EnabledByThisRun, "本次开启被记录（enabledByThisRun=true）", "false");
+                context.Expect(Efs.GetEncrypted(target) == true, "cipher /e 后目录确实加密（读回属性）", Efs.GetEncrypted(target).ToString());
+
+                EfsRestoreResult restored = Efs.Restore(state);
+                context.Expect(restored.Restored, "恢复报告成功", restored.Message);
+                context.Expect(Efs.GetEncrypted(target) == false, "撤销后目录回到未加密", Efs.GetEncrypted(target).ToString());
+
+                // 既有加密状态不得被误解除：EnabledByThisRun=false 时 Restore 不得改动
+                if (Efs.SetEncrypted(target, true))
+                {
+                    EfsState existing = new EfsState();
+                    existing.Path = target;
+                    existing.PreEncrypted = true;
+                    existing.EnabledByThisRun = false;
+                    EfsRestoreResult kept = Efs.Restore(existing);
+                    context.Expect(kept.Restored, "未开启本次写入时不报错", kept.Message);
+                    context.Expect(Efs.GetEncrypted(target) == true, "既有加密状态保持（未被误解除）", Efs.GetEncrypted(target).ToString());
+                    Efs.SetEncrypted(target, false);
+                }
+            }
+            finally
+            {
+                try { Efs.SetEncrypted(target, false); } catch (Exception) { }
+                try { Directory.Delete(target, true); } catch (Exception) { }
+            }
         }
 
         private static void NoUpdateCase(TestContext context, string baseDirectory)

@@ -12,6 +12,8 @@ namespace CodexPluginSync.Core
         public bool Force;
         /// <summary>selftest 专用：跳过 Chrome native host（不读注册表、不改真实清单）。</summary>
         public bool SkipNativeHost;
+        /// <summary>selftest 专用：跳过 EFS 预检/开启/恢复（不调用 cipher）。</summary>
+        public bool SkipEfs;
         public TextWriter Out;
         public TextWriter Err;
     }
@@ -144,7 +146,18 @@ namespace CodexPluginSync.Core
                 }
 
                 Directory.CreateDirectory(paths.BackupsRoot);
-                SyncTransactionResult transaction;
+
+                // §8 EFS：stage 前记录/开启，收尾只撤销本次自己的开启；未恢复不静默。
+                EfsState efsState = null;
+                SyncTransactionResult transaction = null;
+                try
+                {
+                    if (!options.SkipEfs)
+                    {
+                        efsState = Efs.PrepareForWrite(paths.MarketParent);
+                        result.Lines.Add("EFS：preEncrypted=" + efsState.PreEncrypted + "，enabledByThisRun=" + efsState.EnabledByThisRun);
+                    }
+
                 if (options.SkipNativeHost || string.IsNullOrEmpty(chromeVersion))
                 {
                     transaction = SyncTransaction.Execute(paths, backupDirectory, runId, targets);
@@ -161,6 +174,24 @@ namespace CodexPluginSync.Core
                         }
                     });
                 }
+                }
+                finally
+                {
+                    EfsRestoreResult efsRestore = Efs.Restore(efsState);
+                    if (efsRestore.Restored)
+                    {
+                        result.Lines.Add("EFS：已回到操作前状态（now=" + efsRestore.NowEncrypted + "）");
+                    }
+                    else
+                    {
+                        result.Lines.Add("EFS：needs-attention —— " + efsRestore.Message);
+                        if (result.ExitCode == ExitCodesLocator.Ok || result.ExitCode == ExitCodesLocator.Error)
+                        {
+                            result.ExitCode = ExitCodesLocator.NeedsAttention;
+                        }
+                    }
+                }
+
                 result.Status = transaction.Status;
                 result.Message = transaction.Message;
                 for (int i = 0; i < transaction.Actions.Count; i++)
