@@ -185,6 +185,7 @@ namespace CodexPluginSync.Tests
                 BackupAndEnvironmentCase(context, baseDirectory);
                 JunctionEquivalenceCase(context, baseDirectory);
                 RecoveryMatrixCase(context);
+                TransactionStateCase(context);
                 ArgumentParsingCase(context);
             }
             finally
@@ -388,6 +389,110 @@ namespace CodexPluginSync.Tests
                 ? "null"
                 : decision.Row.ToString(System.Globalization.CultureInfo.InvariantCulture) + "/" + decision.Outcome + "/" + decision.Action;
             context.Expect(ok, name + " → row" + row.ToString(System.Globalization.CultureInfo.InvariantCulture) + "/" + outcome + "/" + action, actual);
+        }
+
+        /// <summary>
+        /// §6.3 / §6.4 写侧：backup.json 与 journal 的原子写、seq 递增、无 BOM、完成判据。
+        /// </summary>
+        private static void TransactionStateCase(TestContext context)
+        {
+            context.Begin("transaction/state-io");
+
+            string root = Path.Combine(Path.GetTempPath(), "CodexPluginSync-txn-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                CodexPaths paths = new CodexPaths(root);
+
+                // --- journal：seq 递增 + 回读一致 + 无 BOM ---
+                JournalDto journal = new JournalDto();
+                journal.OperationId = "txn-test";
+                journal.Phase = "planned";
+                journal.Targets = new List<JournalTargetDto>();
+                JournalStore.Write(paths, journal);
+                context.Expect(journal.Seq == 1, "journal 首写 seq=1", journal.Seq.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+                journal.Phase = "staged";
+                JournalStore.Write(paths, journal);
+                context.Expect(journal.Seq == 2, "journal 二次写 seq=2", journal.Seq.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+                JournalDto reread = JournalStore.Read(paths);
+                context.Expect(reread != null && reread.OperationId == "txn-test" && reread.Seq == 2 && reread.Phase == "staged",
+                    "journal 回读 operationId/seq/phase 一致",
+                    reread == null ? "null" : reread.OperationId + "/" + reread.Seq + "/" + reread.Phase);
+                context.Expect(!AtomicJsonFile.HasBom(paths.JournalPath), "journal 文件不带 BOM", AtomicJsonFile.HasBom(paths.JournalPath).ToString());
+
+                JournalStore.Delete(paths);
+                context.Expect(!File.Exists(paths.JournalPath), "journal 可删除", File.Exists(paths.JournalPath).ToString());
+
+                // --- backup.json：完成判据 ---
+                string backupDirectory = Path.Combine(paths.BackupsRoot, "openai-bundled-sync-test");
+                Directory.CreateDirectory(backupDirectory);
+
+                BackupManifestDto emptyComplete = new BackupManifestDto();
+                emptyComplete.Status = BackupStates.Complete;
+                emptyComplete.Components = new List<BackupComponentDto>();
+                context.Expect(BackupManifestStore.Validate(emptyComplete) != null,
+                    "components 为空时 complete 必须被拒绝", "validate=null");
+
+                BackupManifestDto missingDigest = new BackupManifestDto();
+                missingDigest.Status = BackupStates.Complete;
+                BackupComponentDto movedNoDigest = new BackupComponentDto();
+                movedNoDigest.Name = "cache:browser";
+                movedNoDigest.State = BackupStates.Moved;
+                movedNoDigest.BackupPath = Path.Combine(backupDirectory, "cache-browser.previous");
+                missingDigest.Components = new List<BackupComponentDto>();
+                missingDigest.Components.Add(movedNoDigest);
+                context.Expect(BackupManifestStore.Validate(missingDigest) != null,
+                    "state=moved 且缺 previousDigest 必须被拒绝", "validate=null");
+
+                movedNoDigest.PreviousDigest = new ComponentDigestDto();
+                movedNoDigest.PreviousDigest.FileCount = 3;
+                movedNoDigest.PreviousDigest.SizeBytes = 30;
+                movedNoDigest.PreviousDigest.TreeHash = "a1b2c3";
+                movedNoDigest.Digest = new ComponentDigestDto();
+                movedNoDigest.Digest.FileCount = 4;
+                movedNoDigest.Digest.SizeBytes = 40;
+                movedNoDigest.Digest.TreeHash = "d4e5f6";
+                context.Expect(BackupManifestStore.Validate(missingDigest) == null,
+                    "完整快照应通过校验", BackupManifestStore.Validate(missingDigest));
+
+                BackupComponentDto created = new BackupComponentDto();
+                created.Name = "cache:chrome";
+                created.State = BackupStates.Created;
+                created.ExistedBefore = false;
+                created.Digest = movedNoDigest.Digest;
+                missingDigest.Components.Add(created);
+                context.Expect(BackupManifestStore.Validate(missingDigest) == null,
+                    "created 组件无需 backupPath/previousDigest", BackupManifestStore.Validate(missingDigest));
+
+                // --- 写入并回读 ---
+                missingDigest.BackupId = "20260101-000000";
+                missingDigest.Kind = "sync";
+                missingDigest.CreatedUtc = "2026-01-01T00:00:00Z";
+                string manifestPath = BackupManifestStore.Write(backupDirectory, missingDigest);
+                context.Expect(!AtomicJsonFile.HasBom(manifestPath), "backup.json 不带 BOM", AtomicJsonFile.HasBom(manifestPath).ToString());
+
+                BackupManifestDto manifestReread = JsonRead.FromFile<BackupManifestDto>(manifestPath);
+                context.Expect(manifestReread != null && manifestReread.Status == BackupStates.Complete &&
+                    manifestReread.Components != null && manifestReread.Components.Count == 2,
+                    "backup.json 回读 status/components 一致",
+                    manifestReread == null ? "null" : manifestReread.Status + "/" + (manifestReread.Components == null ? "null" : manifestReread.Components.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+                context.Expect(manifestReread != null && manifestReread.Components[0].PreviousDigest != null &&
+                    manifestReread.Components[0].PreviousDigest.TreeHash == "a1b2c3",
+                    "previousDigest 能原样回读",
+                    manifestReread == null ? "null" : "n/a");
+            }
+            finally
+            {
+                try
+                {
+                    Directory.Delete(root, true);
+                }
+                catch (Exception)
+                {
+                }
+            }
         }
 
         private static void NoUpdateCase(TestContext context, string baseDirectory)

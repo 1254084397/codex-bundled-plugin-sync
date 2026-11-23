@@ -99,6 +99,15 @@ namespace CodexPluginSync.Core
 
         [DataMember(Name = "createdUtc")]
         public string CreatedUtc;
+
+        [DataMember(Name = "appxVersion")]
+        public string AppxVersion;
+
+        [DataMember(Name = "components")]
+        public List<BackupComponentDto> Components;
+
+        [DataMember(Name = "nativeHost")]
+        public List<BackupNativeHostDto> NativeHost;
     }
 
     [DataContract]

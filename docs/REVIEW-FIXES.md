@@ -54,7 +54,7 @@ build\bin\Release\CodexPluginSync.exe --selftest
 > 代码层结论：stage 完整性前置已生效；`Repair-CodexSyncOperation` 对 Recover/Revert 都先只读预检全部 target，
 > 任意终态混合即 `attention`，不先移动 live，保留 journal 与安全快照。
 > 验证：31/31 用例、构建、`--selftest`、真机写入式验收（sync → check → rollback → check）均已通过（2026-11-24）；
-> 未完成的是 EFS 主动 `cipher /e`、`cipher /d` 路径的实机验收。
+> EFS 主动 `cipher /e`、`cipher /d` 路径及 A–F 边界验证均已通过实机验收（详见 §8）；剩余边界见 §9。
 
 **跑起来才发现的 bug（说明此前"未验证"的标记是必要的）：**
 
@@ -203,7 +203,7 @@ Restore(EnabledByThisRun=false)  restored=True  stillEncrypted=True（既有加�
 | 场景 | 结果 |
 | --- | --- |
 | A. 正常跑（自动唯一随机目录） | exit 0，`cipher /e→/d` 全绿，目录自动清理 |
-| B. 目标已存在（预付造目录 + 标记文件） | **exit 1**，目录与标记文件原封不动（不再递归删除） |
+| B. 目标已存在（预先造目录 + 标记文件） | **exit 1**，目录与标记文件原封不动（不再递归删除） |
 | C. `-KeepWork` 保留的现场，后续运行 | 保留目录与其标记文件均未被删除 |
 | D. 父目录是 junction 且指向仓外 | **exit 1**（`ABORT 父目录解析后的真实路径不在工作区内`），仓外目录里没有创建任何东西 |
 | E. 显式 `-Scratch` 的父目录不存在 | **exit 1**（`ABORT 显式 -Scratch 的父目录不存在，脚本不代建`），父目录未被创建 |
@@ -228,7 +228,9 @@ E/F 是“显式 `-Scratch` 不得代建父目录”这条修正的专项回归�
 - **D-01**（marketplace 父目录是否该长期加密）仍待结论；当前实现只撤销本次自己的开启。
 - **Codex 是否会自己重建 `chrome\latest`**：同步后新缓存来自 AppX 源包（不含该 junction），
   下次启动 Codex Desktop 时需确认它是否重建别名（目前清单指向版本目录，不依赖别名）。
-- C# 侧（`src/CodexPluginSync`）尚未接管 `--sync` / `--rollback`：本轮的修复落在脚本层，
+- C# 侧（`src/CodexPluginSync`）**已开始接管并已验证部分能力**：
+  `Core/RecoveryMatrix.cs`（§6.6 矩阵）、`Core/TransactionState.cs`（backup.json 的 `digest`/`previousDigest`、
+  journal 写侧、完成判据）已落地并通过 `--selftest`（14 cases）；`--sync` / `--rollback` 本体仍未实现，
   `docs/M1-STATUS.md` 的“未实现”表仍然有效。
 - 运行约束（与本次验收不矛盾）：**后续再次执行写入操作**时仍需先关闭 Chrome / Edge / Codex Desktop，
   否则进程守卫会拒绝写入（设计行为）。**本次**真机验收已在彻底退出这些进程后完成，详见 §8。

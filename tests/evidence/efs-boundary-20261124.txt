@@ -1,0 +1,74 @@
+# EFS 验收脚本边界实测记录（A–F）
+
+- 脚本：`tests/efs-acceptance.ps1`
+- 环境：`D:` NTFS，`CODEX_HOME=E:\CodexHome`（全程未触碰）
+- 说明：下列 A–D 来自同日较早一次执行，E/F 来自"显式 -Scratch 父目录"专项修正后的执行；
+  时间戳取自输出中的临时目录名。
+- 相关提交：`3096b14`（脚本安全边界）、`c0bc63d`（E/F 记录）
+
+## A. 默认唯一随机目录（正常路径）
+
+```text
+scratch = D:\Desktop\codex-bundled-plugin-sync\tests\.work\efs-20261124-020358-93c4f6d7
+ok   已创建本次专用临时目录，身份已登记
+cipher /e exit=0 encrypted=True
+restored=True  nowEncrypted=False
+restored=True  stillEncrypted=True
+restored=False message=撤销后读不到 …\not-there 的加密属性，无法确认已恢复。
+已解密并删除本次创建的临时目录
+EFS 验收通过（cipher /e 开启、继承、cipher /d 撤销、既有状态保持、失败上报），临时目录已清理。
+A exit=0
+```
+
+## B. 目标已存在（拒绝复用/删除）
+
+```text
+scratch = …\tests\.work\efs-decoy   （预先创建，内含 keep.txt）
+ABORT 目标已存在，拒绝复用或删除：…\tests\.work\efs-decoy
+B exit=1（期望 1）
+decoy 仍在=True  marker=must survive
+```
+
+## C. -KeepWork 现场保留（后续运行不得删除）
+
+```text
+C exit=0   保留现场：…\tests\.work\efs-20261124-020413-4d5167d7
+kept dir exists=True（写入 marker.txt）
+--- 再跑一次（不带 -KeepWork）---
+D exit=0
+kept dir 仍在=True   marker 仍在=True
+```
+
+## D. 父目录为 junction 且指向仓外
+
+```text
+junction 目标 = E:\CodexTemp\cps-efs-outside
+ABORT 父目录解析后的真实路径不在工作区内：E:\CodexTemp\cps-efs-outside
+D exit=1（期望 1）
+仓外目录里被创建的东西 = 0
+```
+
+## F. 显式 -Scratch、父目录存在且在工作区内
+
+```text
+preflight: bom=True parse-errors=0
+scratch = D:\Desktop\codex-bundled-plugin-sync\tests\.work\efs-explicit-df4bab
+ok   目标父目录（真实路径）位于工作区内
+ok   已创建本次专用临时目录，身份已登记
+cipher /e exit=0 encrypted=True
+EFS 验收通过（cipher /e 开启、继承、cipher /d 撤销、既有状态保持、失败上报），临时目录已清理。
+F exit=0（期望 0）| 目标目录残留=False（期望 False）
+```
+
+## E. 显式 -Scratch、父目录缺失（脚本不得代建）
+
+```text
+ABORT 显式 -Scratch 的父目录不存在，脚本不代建：…\tests\.work\efs-ghost-parent
+E exit=1（期望 1）| ghost 父目录被创建=False（期望 False）
+```
+
+## 清理
+
+```text
+清理后 tests\.work 残留=0
+```
