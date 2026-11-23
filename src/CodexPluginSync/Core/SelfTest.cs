@@ -193,6 +193,8 @@ namespace CodexPluginSync.Tests
                 RollbackRestoreCase(context, baseDirectory);
                 RollbackRoundTripCase(context, baseDirectory);
                 RollbackGuardsCase(context, baseDirectory);
+                CleanupRetentionCase(context, baseDirectory);
+                DiagRedactionCase(context, baseDirectory);
                 ArgumentParsingCase(context);
             }
             finally
@@ -936,6 +938,243 @@ namespace CodexPluginSync.Tests
             catch (Exception ex)
             {
                 context.Expect(false, "rollback/restore 不应抛异常", ex.GetType().Name + ": " + ex.Message);
+            }
+            finally
+            {
+                try { Directory.Delete(root, true); } catch (Exception) { }
+            }
+        }
+
+        /// <summary>
+        /// §7.4 清理保留规则：keepBackups 只数 complete、partial/verify-failed 按天数、
+        /// rollback-safety 只留最新 1 个、空备份目录直删、stage 按 staleStageHours、
+        /// 被 journal 引用的一律不删。
+        /// </summary>
+        private static void CleanupRetentionCase(TestContext context, string baseDirectory)
+        {
+            context.Begin("cleanup/retention");
+
+            string root = Path.Combine(baseDirectory, "cleanup");
+            string toolLogs = Path.Combine(root, "tool-logs");
+            try
+            {
+                CodexPaths paths = new CodexPaths(root);
+                Directory.CreateDirectory(paths.BackupsRoot);
+                Directory.CreateDirectory(paths.MarketParent);
+                Directory.CreateDirectory(paths.CacheParent);
+                Directory.CreateDirectory(paths.LogDirectory);
+                Directory.CreateDirectory(toolLogs);
+
+                string oldComplete = MakeBackup(paths, "sync", BackupStates.Complete, -10, "c-old");
+                string newComplete = MakeBackup(paths, "sync", BackupStates.Complete, -1, "c-new");
+                string oldPartial = MakeBackup(paths, "sync", BackupStates.Partial, -20, "p-old");
+                string newPartial = MakeBackup(paths, "sync", BackupStates.Partial, -1, "p-new");
+                string oldFailed = MakeBackup(paths, "sync", BackupStates.VerifyFailed, -40, "f-old");
+                string oldSafety = MakeBackup(paths, "rollback-safety", BackupStates.Complete, -5, "s-old");
+                string newSafety = MakeBackup(paths, "rollback-safety", BackupStates.Complete, -2, "s-new");
+                string emptyDir = Path.Combine(paths.BackupsRoot, "openai-bundled-sync-empty");
+                Directory.CreateDirectory(emptyDir);
+
+                string staleStage = Path.Combine(paths.CacheParent, "browser.stage-old");
+                Directory.CreateDirectory(staleStage);
+                Directory.SetLastWriteTimeUtc(staleStage, DateTime.UtcNow.AddHours(-48));
+                string freshStage = Path.Combine(paths.CacheParent, "chrome.stage-fresh");
+                Directory.CreateDirectory(freshStage);
+                string referencedStage = Path.Combine(paths.CacheParent, "computer-use.stage-ref");
+                Directory.CreateDirectory(referencedStage);
+                Directory.SetLastWriteTimeUtc(referencedStage, DateTime.UtcNow.AddHours(-72));
+
+                JournalDto journal = new JournalDto();
+                journal.OperationId = "cleanup-ref";
+                journal.Phase = JournalPhases.CommitStarted;
+                journal.Targets = new List<JournalTargetDto>();
+                JournalTargetDto target = new JournalTargetDto();
+                target.Component = "cache:computer-use";
+                target.LivePath = Path.Combine(paths.CacheParent, "computer-use");
+                target.StagePath = referencedStage;
+                journal.Targets.Add(target);
+                JournalStore.Write(paths, journal);
+
+                string oldLog = Path.Combine(paths.LogDirectory, "sync-old.log");
+                File.WriteAllText(oldLog, "old");
+                File.SetLastWriteTimeUtc(oldLog, DateTime.UtcNow.AddDays(-60));
+                string freshLog = Path.Combine(paths.LogDirectory, "sync-fresh.log");
+                File.WriteAllText(freshLog, "fresh");
+
+                Settings settings = new Settings();
+                settings.KeepBackups = 1;
+                settings.StaleStageHours = 24;
+                settings.KeepLogDays = 30;
+                settings.PartialBackupRetentionDays = 7;
+                settings.FailedBackupRetentionDays = 30;
+
+                CleanupOptions cleanup = new CleanupOptions();
+                cleanup.CodexHome = root;
+                cleanup.SettingsOverride = settings;
+                cleanup.ToolLogDirectoryOverride = toolLogs;
+                cleanup.Out = TextWriter.Null;
+                cleanup.Err = TextWriter.Null;
+
+                SyncRunResult run = CleanupEngine.Run(cleanup);
+                context.Expect(run.ExitCode == ExitCodesLocator.Ok, "清理退出码 0", run.ExitCode + "/" + run.Message);
+
+                context.Expect(!Directory.Exists(oldComplete), "超出 keepBackups 的 complete 被删",
+                    oldComplete + " || " + string.Join(" | ", run.Lines.ToArray()));
+                context.Expect(Directory.Exists(newComplete), "最新 complete 保留", newComplete);
+                context.Expect(!Directory.Exists(oldPartial), "过期 partial 被删", oldPartial);
+                context.Expect(Directory.Exists(newPartial), "未过期 partial 保留", newPartial);
+                context.Expect(!Directory.Exists(oldFailed), "过期 verify-failed 被删", oldFailed);
+                context.Expect(!Directory.Exists(oldSafety), "旧 rollback-safety 被删", oldSafety);
+                context.Expect(Directory.Exists(newSafety), "最新 rollback-safety 保留", newSafety);
+                context.Expect(!Directory.Exists(emptyDir), "空备份目录直删", emptyDir);
+
+                context.Expect(!Directory.Exists(staleStage), "过期 stage 被删",
+                    staleStage + " || " + string.Join(" | ", run.Lines.ToArray()));
+                context.Expect(Directory.Exists(freshStage), "新鲜 stage 保留", freshStage);
+                context.Expect(Directory.Exists(referencedStage), "journal 引用的 stage 永不删", referencedStage);
+
+                context.Expect(!File.Exists(oldLog), "超 keepLogDays 的日志被删", oldLog);
+                context.Expect(File.Exists(freshLog), "近期日志保留", freshLog);
+
+                // 干跑：不删任何东西
+                string staleStage2 = Path.Combine(paths.CacheParent, "browser.stage-dry");
+                Directory.CreateDirectory(staleStage2);
+                Directory.SetLastWriteTimeUtc(staleStage2, DateTime.UtcNow.AddHours(-48));
+                cleanup.DryRun = true;
+                SyncRunResult dry = CleanupEngine.Run(cleanup);
+                context.Expect(dry.Status == CleanupEngine.StatusDryRun, "干跑终态 dry-run", dry.Status);
+                context.Expect(Directory.Exists(staleStage2), "干跑不删任何东西", staleStage2);
+
+                CliOptions parsed = null;
+                string parseError = null;
+                bool ok = CliOptions.TryParse(new string[] { "--cleanup-only", "--dry-run" }, out parsed, out parseError);
+                context.Expect(ok && parsed.Command == CliOptions.CommandCleanupOnly && parsed.DryRun,
+                    "--cleanup-only --dry-run 可解析", parseError);
+            }
+            catch (Exception ex)
+            {
+                context.Expect(false, "cleanup/retention 不应抛异常", ex.GetType().Name + ": " + ex.Message);
+            }
+            finally
+            {
+                try { Directory.Delete(root, true); } catch (Exception) { }
+            }
+        }
+
+        private static string MakeBackup(CodexPaths paths, string kind, string status, int ageDays, string tag)
+        {
+            string directory = Path.Combine(paths.BackupsRoot, CodexPaths.BackupFolderPrefix + kind.Replace('-', '_') + "-" + tag);
+            Directory.CreateDirectory(directory);
+            BackupManifestDto manifest = new BackupManifestDto();
+            manifest.BackupId = Path.GetFileName(directory);
+            manifest.Kind = kind;
+            manifest.Status = status;
+            manifest.CreatedUtc = DateTime.UtcNow.AddDays(ageDays).ToString("yyyy-MM-ddTHH:mm:ssZ",
+                System.Globalization.CultureInfo.InvariantCulture);
+            manifest.Components = new List<BackupComponentDto>();
+            manifest.NativeHost = new List<BackupNativeHostDto>();
+            BackupManifestStore.Write(directory, manifest);
+            // 让目录名与 createdUtc 不参与判定：身份只看 backup.json 的 kind/status
+            Directory.SetLastWriteTimeUtc(directory, DateTime.UtcNow.AddDays(ageDays));
+            return directory;
+        }
+
+        /// <summary>
+        /// §7.5 诊断包：文件清单齐全、默认脱敏（用户名/用户目录被替掉）、
+        /// manifest.json 如实标记 redacted，--no-redact 时标记为 false。
+        /// </summary>
+        private static void DiagRedactionCase(TestContext context, string baseDirectory)
+        {
+            context.Begin("diag/redaction");
+
+            string root = Path.Combine(baseDirectory, "diag");
+            string toolLogs = Path.Combine(root, "tool-logs");
+            try
+            {
+                CodexPaths paths = new CodexPaths(root);
+                Directory.CreateDirectory(paths.BackupsRoot);
+                Directory.CreateDirectory(paths.LogDirectory);
+                Directory.CreateDirectory(toolLogs);
+                Directory.CreateDirectory(Path.Combine(root, ".tmp", "bundled-marketplaces"));
+
+                string userName = Environment.GetEnvironmentVariable("USERNAME") ?? "unknownuser";
+                string logPath = Path.Combine(paths.LogDirectory, "sync-sample.log");
+                File.WriteAllText(logPath, "root=" + root + " user=" + userName + "\r\n");
+
+                DiagOptions diag = new DiagOptions();
+                diag.CodexHome = root;
+                diag.OutPath = Path.Combine(root, "diag.zip");
+                diag.SkipRuntimeProbe = true;
+                diag.ToolLogDirectoryOverride = toolLogs;
+                diag.Out = TextWriter.Null;
+                diag.Err = TextWriter.Null;
+
+                SyncRunResult run = DiagExporter.Run(diag);
+                context.Expect(run.ExitCode == ExitCodesLocator.Ok, "导出退出码 0", run.ExitCode + "/" + run.Message);
+                context.Expect(File.Exists(diag.OutPath), "zip 已生成", diag.OutPath);
+                if (!File.Exists(diag.OutPath))
+                {
+                    return;
+                }
+
+                bool hasState = false;
+                bool hasManifest = false;
+                bool hasReadme = false;
+                bool hasLog = false;
+                string manifestText = null;
+                string stateText = null;
+                string logText = null;
+                using (System.IO.Compression.ZipArchive archive = System.IO.Compression.ZipFile.OpenRead(diag.OutPath))
+                {
+                    foreach (System.IO.Compression.ZipArchiveEntry entry in archive.Entries)
+                    {
+                        string text;
+                        using (System.IO.StreamReader reader = new System.IO.StreamReader(entry.Open()))
+                        {
+                            text = reader.ReadToEnd();
+                        }
+                        if (entry.FullName == "state.json") { hasState = true; stateText = text; }
+                        else if (entry.FullName == "manifest.json") { hasManifest = true; manifestText = text; }
+                        else if (entry.FullName == "README.txt") { hasReadme = true; }
+                        else if (entry.FullName.StartsWith("logs/", StringComparison.Ordinal)) { hasLog = true; logText = text; }
+                    }
+                }
+
+                context.Expect(hasState && hasManifest && hasReadme && hasLog, "包含 state/manifest/README/logs",
+                    "state=" + hasState + " manifest=" + hasManifest + " readme=" + hasReadme + " log=" + hasLog);
+                context.Expect(manifestText != null && manifestText.IndexOf("\"redacted\":true", StringComparison.Ordinal) >= 0,
+                    "默认 manifest.json 标记 redacted=true", manifestText);
+                context.Expect(stateText != null && stateText.IndexOf(root, StringComparison.OrdinalIgnoreCase) < 0,
+                    "state.json 不含完整 CodexHome 路径", stateText);
+                context.Expect(logText != null && logText.IndexOf("<codexhome>", StringComparison.Ordinal) >= 0,
+                    "日志里的 CodexHome 被替换为 <codexhome>", logText);
+                context.Expect(logText != null && logText.IndexOf(userName, StringComparison.Ordinal) < 0,
+                    "日志里的用户名已脱敏", logText);
+
+                // --no-redact：必须显式传参，且如实标记
+                string rawPath = Path.Combine(root, "diag-raw.zip");
+                diag.OutPath = rawPath;
+                diag.NoRedact = true;
+                SyncRunResult raw = DiagExporter.Run(diag);
+                context.Expect(raw.ExitCode == ExitCodesLocator.Ok, "--no-redact 也能导出", raw.ExitCode + "/" + raw.Message);
+                string rawManifest = null;
+                using (System.IO.Compression.ZipArchive archive = System.IO.Compression.ZipFile.OpenRead(rawPath))
+                {
+                    foreach (System.IO.Compression.ZipArchiveEntry entry in archive.Entries)
+                    {
+                        if (entry.FullName != "manifest.json") { continue; }
+                        using (System.IO.StreamReader reader = new System.IO.StreamReader(entry.Open()))
+                        {
+                            rawManifest = reader.ReadToEnd();
+                        }
+                    }
+                }
+                context.Expect(rawManifest != null && rawManifest.IndexOf("\"redacted\":false", StringComparison.Ordinal) >= 0,
+                    "--no-redact 时 manifest 标记 redacted=false", rawManifest);
+            }
+            catch (Exception ex)
+            {
+                context.Expect(false, "diag/redaction 不应抛异常", ex.GetType().Name + ": " + ex.Message);
             }
             finally
             {

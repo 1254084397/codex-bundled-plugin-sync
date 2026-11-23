@@ -228,11 +228,13 @@ E/F 是“显式 `-Scratch` 不得代建父目录”这条修正的专项回归�
 - **D-01**（marketplace 父目录是否该长期加密）仍待结论；当前实现只撤销本次自己的开启。
 - **Codex 是否会自己重建 `chrome\latest`**：同步后新缓存来自 AppX 源包（不含该 junction），
   下次启动 Codex Desktop 时需确认它是否重建别名（目前清单指向版本目录，不依赖别名）。
-- C# 侧（`src/CodexPluginSync`）已接管并已验证：`--check`、`--sync`（组件集合、stage、七阶段事务、§9.4 native host、§8 EFS）、
-  `--rollback`（§7.3）与 `--selftest`（**21 cases**，2026-11-24 实测：`SELFTEST PASS (21 cases)`）。
-  仍未做：`--cleanup-only`、`--export-diag`、崩溃后自动执行恢复矩阵（当前只报告 phase 并阻停）、
+- C# 侧（`src/CodexPluginSync`）已接管全部命令：`--check`、`--sync`（组件集合、stage、七阶段事务、§9.4 native host、§8 EFS）、
+  `--rollback`（§7.3）、`--cleanup-only`（§7.4）、`--export-diag`（§7.5，含 `Redactor`）与 `--selftest`
+  （**23 cases**，2026-11-24 实测：`SELFTEST PASS (23 cases)`）。
+  仍未做：崩溃后自动执行恢复矩阵（当前是“遇遗留 journal 直接阻停并在 `--check` 里报 phase”）、
   native host 回滚的“删键”分支（见 `docs/M1-STATUS.md` 的“未实现”表）。
-- 回滚的**真机**验收尚未做：C# 回滚只在临时目录与 fixture 上验证过（`rollback/restore`、
-  `rollback/roundtrip`、`rollback/guards`），脚本层 `--rollback` 的真机演练见 §8。两者不能互相代替。
+- 回滚与清理的**真机写入**验收尚未做：C# 侧只在临时目录与 fixture 上验证过
+  （`rollback/restore`、`rollback/roundtrip`、`rollback/guards`、`cleanup/retention`）；
+  真机上只跑了 `--cleanup-only --dry-run`（114 项计划，未删任何东西）。脚本层的真机演练见 §8，两者不能互相代替。
 - 运行约束（与本次验收不矛盾）：**后续再次执行写入操作**时仍需先关闭 Chrome / Edge / Codex Desktop，
   否则进程守卫会拒绝写入（设计行为）。**本次**真机验收已在彻底退出这些进程后完成，详见 §8。

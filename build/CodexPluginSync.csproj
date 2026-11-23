@@ -26,6 +26,8 @@
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Core" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
     <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.Xml" />
     <!-- 本机没有 .NET Framework 4.8 targeting pack 时，内置 MSBuild 会回退到运行时目录的
@@ -44,8 +46,7 @@
     <ItemGroup>
       <AllBuildOutputs Include="$(OutputPath)**\*" />
       <ExpectedBuildOutput Include="$(OutputPath)$(AssemblyName).exe" />
-      <UnexpectedBuildOutput Include="@(AllBuildOutputs)" Exclude="@(ExpectedBuildOutput)" />
-    </ItemGroup>
+      <UnexpectedBuildOutput Include="@(AllBuildOutputs)" Exclude="@(ExpectedBuildOutput)" />    </ItemGroup>
     <Error Condition="'@(UnexpectedBuildOutput)' != ''"
            Text="发布目录必须只有 $(AssemblyName).exe，实际多出：@(UnexpectedBuildOutput)" />
   </Target>

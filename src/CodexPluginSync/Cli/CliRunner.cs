@@ -44,12 +44,16 @@ namespace CodexPluginSync.Cli
                     return RunSync(options, Console.Out, Console.Error);
                 case CliOptions.CommandRollback:
                     return RunRollback(options, Console.Out, Console.Error);
+                case CliOptions.CommandCleanupOnly:
+                    return RunCleanup(options, Console.Out, Console.Error);
+                case CliOptions.CommandExportDiag:
+                    return RunExportDiag(options, Console.Out, Console.Error);
                 case CliOptions.CommandSelfTest:
                     return SelfTest.Run(options.FixtureDirectory, Console.Out, Console.Error);
                 default:
                     Console.Error.WriteLine("Command '" + options.Command +
                         "' is not implemented in this build (M1 increment 1: check only).");
-                    Console.Error.WriteLine("Implemented today: --check, --sync, --rollback, --selftest, --version, --help.");
+                    Console.Error.WriteLine("Implemented today: --check, --sync, --rollback, --cleanup-only, --export-diag, --selftest, --version, --help.");
                     return ExitCodes.Error;
             }
         }
@@ -139,6 +143,33 @@ namespace CodexPluginSync.Cli
             SyncRunResult result = RollbackEngine.Run(rollbackOptions);
             return result.ExitCode;
         }
+
+        public static int RunCleanup(CliOptions options, TextWriter stdout, TextWriter stderr)
+        {
+            Settings settings = Settings.Load(null);
+            CleanupOptions cleanupOptions = new CleanupOptions();
+            cleanupOptions.CodexHome = options.CodexHomeOverride ?? settings.CodexHome;
+            cleanupOptions.DryRun = options.DryRun;
+            cleanupOptions.Out = stdout;
+            cleanupOptions.Err = stderr;
+
+            SyncRunResult result = CleanupEngine.Run(cleanupOptions);
+            return result.ExitCode;
+        }
+
+        public static int RunExportDiag(CliOptions options, TextWriter stdout, TextWriter stderr)
+        {
+            Settings settings = Settings.Load(null);
+            DiagOptions diagOptions = new DiagOptions();
+            diagOptions.CodexHome = options.CodexHomeOverride ?? settings.CodexHome;
+            diagOptions.OutPath = options.OutPath;
+            diagOptions.NoRedact = options.NoRedact;
+            diagOptions.Out = stdout;
+            diagOptions.Err = stderr;
+
+            SyncRunResult result = DiagExporter.Run(diagOptions);
+            return result.ExitCode;
+        }
         public static string UsageText()
         {
             StringWriter writer = new StringWriter();
@@ -150,8 +181,8 @@ namespace CodexPluginSync.Cli
             writer.WriteLine("  CodexPluginSync.exe --check [--json] [--quiet]     read-only check");
             writer.WriteLine("  CodexPluginSync.exe --sync [--force] [--source-bundle <dir>]  run the sync transaction");
             writer.WriteLine("  CodexPluginSync.exe --rollback [--backup <id>]     restore a backup (newest status=complete by default)");
-            writer.WriteLine("  CodexPluginSync.exe --cleanup-only                 remove stale stages and old logs (not in this build)");
-            writer.WriteLine("  CodexPluginSync.exe --export-diag [--out <path>] [--no-redact]   (not in this build)");
+            writer.WriteLine("  CodexPluginSync.exe --cleanup-only [--dry-run]     remove stale stages, old backups and old logs");
+            writer.WriteLine("  CodexPluginSync.exe --export-diag [--out <path>] [--no-redact]   write a redacted diagnostic zip");
             writer.WriteLine("  CodexPluginSync.exe --selftest [--fixture <dir>]   fixture end-to-end self-test");
             writer.WriteLine("  CodexPluginSync.exe --version | --help");
             writer.WriteLine();

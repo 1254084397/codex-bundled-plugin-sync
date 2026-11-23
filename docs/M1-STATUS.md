@@ -25,16 +25,24 @@
 | **`--sync` 端到端（C#）** | `Core/SyncEngine.cs`、`Core/Installer.cs` | 解析 CodexHome/AppX → 组件集合（marketplace + browser/chrome/computer-use）→ stage（junction 不展开、复制后重建）→ 七阶段事务 → native host 钩子；`sync/engine` 用例（两次运行：完整同步 / 缓存命中跳过） |
 | **§8 EFS（C#）** | `Core/Efs.cs`、`SyncEngine` | stage 前 `PrepareForWrite(marketParent)`，`finally` 统一 `Restore`；成功判据是**重新读到的 Encrypted 属性**（实测 `cipher /d` 对不存在路径仍返回 0），读不到即“未恢复”→ 退出码 2。`efs/state-machine` 6 条断言（卷不支持时记 skip，不宣称通过） |
 | **§7.3 回滚（C#）** | `Core/RollbackEngine.cs` | 按 `createdUtc` 选最新 `status=complete`（或 `--backup <id>`）；非 complete 直接拒；动 live 前校验 `previousDigest`；安全快照写完并校验通过才动 live；先写满 `journal.targets` 再进 `rollback-commit-started`；失败退回安全快照、退不干净 → needs-attention 并保留 journal 与两份快照；遗留 journal 直接阻停（不猜）。`rollback/restore` 12 条 + `rollback/roundtrip` 8 条 + `rollback/guards` 11 条断言 |
+| **§7.4 清理（C#）** | `Core/CleanupEngine.cs` | 身份一律读 `backup.json` 的 kind/status（legacy 才回退前缀）；`keepBackups` 只数 complete；`partial`/`verify-failed` 按天数；`kind=rollback-safety` 只留最新 1 个；空备份目录直删；stage 只删“超过 `staleStageHours` 且不被 journal 引用”；日志按 `keepLogDays`，最近 1 小时写过的不删；删除前做路径边界检查，reparse point 只删链接不递归。`--dry-run` 只出计划。`cleanup/retention` 18 条断言 |
+| **§7.5 诊断导出 + 脱敏（C#）** | `Core/DiagExporter.cs`（含 `Redactor`） | 单 zip：`state.json`/`backups.json`/`settings.json`/`native-host.txt`/`environment.txt`/最近 5 个日志/`manifest.json`/`README.txt`；默认脱敏（用户名、计算机名、用户目录链、SID、临时目录），保留盘符；`--no-redact` 需显式传参且在 `manifest.json` 如实标记；不收集 token/密钥/cookie/插件文件/AppX/对话数据。`diag/redaction` 8 条断言 |
 
 ## 实测结果（本机）
 
 ```text
---selftest                      → SELFTEST PASS (21 cases)   ← 2026-11-24 构建后实测
+--selftest                      → SELFTEST PASS (23 cases)   ← 2026-11-24 构建后实测
 --check（真机）                  → Verdict: ok, Update needed: No, exit 0
 --check --json（stderr 丢弃）     → 单行 JSON 可解析，exitCode=2 时与进程退出码一致
+--cleanup-only --dry-run（真机）  → 清理计划 114 项，exit 0，未删除任何内容
+--export-diag --out <temp>.zip   → 12 个条目，manifest.json 标 redacted=true，zip 已删除
 --bogus                         → exit 1
 真机 native-messaging 清单哈希      → 2980548C…F9022（selftest 用 SkipNativeHost，未变）
 ```
+
+真机 dry-run 暴露的一个保守选择：脚本层产生的 `backups\rollback-before-*` 目录（没有 `backup.json`）
+会被归入“不是本工具创建的目录”而不动。清理器只按 `backup.json` 的 kind/status 认定身份，
+例外只给 `openai-bundled-sync-*` 这个 legacy 前缀，宁可不删。
 
 真机发现并已修复的假阳性：Chrome manifest 指向 `...\chrome\latest\...`，`latest` 是指向版本目录的
 junction。字符串比较会误报 `outdated`（且会去改写一个正确的文件）。现改为 `GetFinalPathNameByHandle`
@@ -45,17 +53,16 @@ junction。字符串比较会误报 `outdated`（且会去改写一个正确的�
 `scripts/*.ps1` 的旧实现按组内审查修了五处风险（回滚安全性、提交失败恢复、EFS 还原、
 注册表路径边界、并发互斥），并补了 15 个 fixture 用例。
 落点与验证方式见 `docs/REVIEW-FIXES.md`，测试入口见 `tests/README.md`。
-C# 侧已接管 `--sync` 与 `--rollback`（`Core/SyncEngine.cs`、`Core/RollbackEngine.cs`），
+C# 侧已接管全部写入命令 `--sync`、`--rollback`、`--cleanup-only`、`--export-diag`
+（`Core/SyncEngine.cs`、`Core/RollbackEngine.cs`、`Core/CleanupEngine.cs`、`Core/DiagExporter.cs`）。
 上表“已实现并可验证”为 C# 实测结果；脚本层保留为对照实现与验收入口。
 
 ## 未实现（不得视为已完成）
 
 | 缺口 | 归属 | 依据 |
 | --- | --- | --- |
-| `--cleanup-only` / `--export-diag` | M1 增量 3+ | §7.4、§7.5 |
-| 崩溃后的自动恢复执行（`--check` 目前只报告 phase，不跑矩阵动作） | 同上 | §6.6 |
+| 崩溃后的自动恢复执行（`--check` 目前只报告 phase，`--rollback`/`--sync` 遇遗留 journal 直接阻停，不跑矩阵动作） | M1 增量 4 | §6.6 |
 | native host 回滚的“注册表值原本不存在 → 删键”分支（sync 不会建键，故未实现；脚本层已覆盖） | 同上 | §9.4 |
-| `Redactor` / 诊断包 | 同上 | §7.5 |
 | WinForms 界面、托盘 | M3 / M4 | §11、§12 |
 | `.cmd` 兼容映射（2→0） | M2 | §2.4 |
 

@@ -19,6 +19,7 @@ namespace CodexPluginSync.Cli
         public bool Json;
         public bool Quiet;
         public bool Force;
+        public bool DryRun;
         public bool NoRedact;
         public string BackupId;
         public string OutPath;
@@ -77,6 +78,9 @@ namespace CodexPluginSync.Cli
                         break;
                     case "--force":
                         options.Force = true;
+                        break;
+                    case "--dry-run":
+                        options.DryRun = true;
                         break;
                     case "--no-redact":
                         options.NoRedact = true;
