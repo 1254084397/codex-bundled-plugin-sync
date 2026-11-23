@@ -102,22 +102,25 @@ powershell -ExecutionPolicy Bypass -File .\scripts\sync-openai-bundled.ps1 -Root
 
 ### Roadmap
 
-The next milestone turns this into a single signed-free `.exe` with a GUI: one status screen, one sync button, real progress, backup browsing, a tray indicator, and a diagnostic export. The full specification — architecture, data formats, transaction and crash-recovery rules, UI layout, failure matrix, risks — lives in **[docs/DESIGN.md](docs/DESIGN.md)**.
+The next milestone turns this into a **single-exe distribution** with a GUI: one status screen, one sync button, real progress, backup browsing, a tray indicator, and a diagnostic export. The specification is frozen as contracts in **[docs/DESIGN.md](docs/DESIGN.md)** — transaction state machine, component-snapshot backups, exit codes, JSON schema, EFS and native-messaging boundaries, redaction rules.
 
-| Stage | Scope | Result |
+| Stage | Scope | Done when |
 | --- | --- | :--- |
-| M1 | Core skeleton, read-only status screen, `--check --json` | GUI replacement for `--check` |
-| M2 | Copy/verify/swap transaction, progress, cancel, process guard | GUI replacement for `--sync`, safer than the scripts |
-| M3 | Rollback and cleanup engines, backup browser, restore any backup | Replaces `--rollback` and `--cleanup-only` |
-| M4 | Settings, tray, scheduled checks, diagnostic export | Feature-complete |
-| M5 | Build script, CI, README rewrite, `--selftest` fixture | v1.0 |
+| M0 | Freeze contracts: state machine, backup model, exit codes, JSON schema, recovery, EFS/native-host/redaction boundaries | `docs/DESIGN.md` v0.2 agreed |
+| M1 | Headless core + selftest: paths, check, sync, rollback, cleanup, journal, backup store, hasher | `--selftest` green on the fixture suite |
+| M2 | CLI compatibility layer: arguments, exit codes, `--json`, `.cmd` calls the exe (mapping `2` back to `0`) | Existing scheduled tasks keep working |
+| M3 | WinForms UI: sync, backups, logs, recovery state | Full sync and rollback through the GUI |
+| M4 | Tray icon and scheduled checks (off by default) | Resident mode does not disturb the core |
+| M5 | Real Windows acceptance, build/CI, README rewrite | v1.0 |
 
 Design notes worth knowing now:
 
-- Target: C# WinForms on .NET Framework 4.8 — Win10/11 has the runtime in-box, so the exe stays around 200–300 KB with zero dependencies.
+- Target: C# WinForms on .NET Framework 4.8, **single-exe distribution** — one `CodexPluginSync.exe`, no third-party DLLs, no installers. This is not a self-contained build: the machine must already have .NET Framework 4.8 (in-box on Windows 10 1903+ and Windows 11). `robocopy.exe` and `cipher.exe` are OS tools, not shipped dependencies.
 - The PowerShell logic moves *into* the exe instead of being shelled out to, so a single downloaded file is enough to run.
-- The existing scripts stay as a legacy entry point for scheduled tasks and scripts; the `.cmd` wrapper keeps working.
-- The EFS workaround (`cipher /e` on the staging parent, `robocopy /COPY:DAT`, then `cipher /d`) is carried over unchanged. Do not replace it with a plain file copy.
+- The existing scripts stay as a legacy entry point for scheduled tasks and scripts; the `.cmd` wrapper keeps working, and its no-argument default still means "sync".
+- Backups become component snapshots: a run that only updated one plugin cache records and restores only that component, instead of demanding every cache be present.
+- The EFS sequence (`cipher /e` on the staging parent, `robocopy /COPY:DAT`, then `cipher /d`, with an encrypted-attribute recheck) is treated as a contract, not a detail. Do not replace it with a plain file copy, and do not assume a fixture test proves it works.
+- `--check` will exit `2` when an update is needed; the current script exits `0`. The `.cmd` wrapper maps `2` back to `0` so existing automation is unaffected.
 
 ### Repository layout
 
@@ -174,22 +177,25 @@ Codex Desktop 的内置插件装在 AppX 包里，运行时却从 `CodexHome` �
 
 ### Roadmap / 路线图
 
-下一步会把它做成**单文件 `.exe` + 图形界面**：一个状态页、一个同步按钮、真实进度、备份浏览、托盘提示和诊断导出。完整规格（架构、数据格式、事务与崩溃恢复规则、界面布局、失败矩阵、风险清单）见 **[docs/DESIGN.md](docs/DESIGN.md)**。
+下一步会把它做成**单 exe 分发 + 图形界面**：一个状态页、一个同步按钮、真实进度、备份浏览、托盘提示和诊断导出。规格已按“先冻结契约”整理成 **[docs/DESIGN.md](docs/DESIGN.md)**（事务状态机、组件快照备份、退出码、JSON schema、EFS 与 native messaging 边界、脱敏规则）。
 
-| 阶段 | 内容 | 结果 |
+| 阶段 | 内容 | 完成判据 |
 | --- | --- | :--- |
-| M1 | Core 骨架、只读状态页、`--check --json` | 图形版替代 `--check` |
-| M2 | 复制/校验/交换事务、进度、取消、进程占用处理 | 图形版替代 `--sync`，比脚本更安全 |
-| M3 | 回滚与清理引擎、备份浏览、恢复任意备份 | 取代 `--rollback` 与 `--cleanup-only` |
-| M4 | 设置页、托盘、定时检查、诊断导出 | 功能完整 |
-| M5 | 构建脚本、CI、README 重写、`--selftest` fixture | v1.0 |
+| M0 | 冻结契约：状态机、备份模型、退出码、JSON schema、恢复策略、EFS/注册表/脱敏边界 | `docs/DESIGN.md` v0.2 定稿 |
+| M1 | 无界面 Core + selftest：路径、检查、同步、回滚、清理、journal、备份存储、哈希 | `--selftest` 在 fixture 上全绿 |
+| M2 | CLI 兼容层：参数、退出码、`--json`、`.cmd` 改为调用 exe（并把 `2` 映射回 `0`） | 旧计划任务不中断 |
+| M3 | WinForms 主界面：同步、备份、日志、恢复状态 | 能通过界面完成同步与回滚 |
+| M4 | 托盘与定时检查（默认关闭） | 常驻不干扰 Core |
+| M5 | 真机验收、构建/CI、README 重写 | v1.0 |
 
 现在就该知道的几个设计点：
 
-- 技术选型是 .NET Framework 4.8 + WinForms：Win10/11 自带运行时，exe 约 200–300 KB，零依赖。
+- 技术选型是 C# WinForms + .NET Framework 4.8，交付形态是**单 exe 分发**：一个 `CodexPluginSync.exe`，无第三方 DLL、无安装器。注意这**不是自包含构建**：目标机必须已有 .NET Framework 4.8（Win10 1903+ 与 Win11 自带）。`robocopy.exe`、`cipher.exe` 属于系统工具，不算随程序分发的依赖。
 - 逻辑会搬进 exe，而不是让 exe 去调用 ps1 —— 这样只下载一个文件就能用。
-- 现有脚本保留为 legacy 入口，计划任务和批处理不受影响，`.cmd` 继续可用。
-- EFS 那套处理（stage 父目录 `cipher /e` → `robocopy /COPY:DAT` → `cipher /d`）原样保留，**不要换成普通文件复制**，否则在 E: 这类盘上会失败。
+- 现有脚本保留为 legacy 入口，计划任务不受影响；`.cmd` 无参数仍然是“同步”。
+- 备份改成组件快照：只更新了一个插件缓存的那次运行，回滚时也只动那一项，不再要求四个组件全部存在。
+- EFS 那套序列（stage 父目录 `cipher /e` → `robocopy /COPY:DAT` → `cipher /d` → 复查加密属性）是契约而不是细节。**不要换成普通文件复制**，也不要以为 fixture 测试能证明它在真机上成立。
+- `--check` 在需要更新时会以退出码 `2` 结束，而当前脚本返回 `0`。`.cmd` 会把 `2` 映射回 `0`，现有自动化不受影响。
 
 ### 快速使用
 
