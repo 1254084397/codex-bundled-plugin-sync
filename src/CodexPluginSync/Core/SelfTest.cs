@@ -187,6 +187,7 @@ namespace CodexPluginSync.Tests
                 RecoveryMatrixCase(context);
                 TransactionStateCase(context);
                 SyncTransactionCase(context);
+                SyncEngineCase(context, baseDirectory);
                 ArgumentParsingCase(context);
             }
             finally
@@ -667,6 +668,78 @@ namespace CodexPluginSync.Tests
             catch (Exception ex)
             {
                 context.Expect(false, "sync/transaction 不应抛异常", ex.GetType().Name + ": " + ex.Message + " @ " + ex.StackTrace);
+            }
+            finally
+            {
+                try { Directory.Delete(root, true); } catch (Exception) { }
+            }
+        }
+
+        /// <summary>
+        /// §7.2 + §9 的端到端一次：fixture 里跑 SyncEngine 两遍（完整同步 / 缓存命中跳过）。
+        /// 只用临时目录，不触真实 CodexHome、不碰 EFS 与注册表。
+        /// </summary>
+        private static void SyncEngineCase(TestContext context, string baseDirectory)
+        {
+            context.Begin("sync/engine");
+
+            string root = Path.Combine(baseDirectory, "sync-engine");
+            string sourceBundle = Path.Combine(root, "src", "openai-bundled");
+            string codexHome = Path.Combine(root, "CodexHome");
+            try
+            {
+                string[] plugins = new string[] { "browser", "chrome", "computer-use" };
+                for (int i = 0; i < plugins.Length; i++)
+                {
+                    string pluginDir = Path.Combine(sourceBundle, "plugins", plugins[i]);
+                    string metaDir = Path.Combine(pluginDir, ".codex-plugin");
+                    Directory.CreateDirectory(metaDir);
+                    File.WriteAllText(Path.Combine(metaDir, "plugin.json"),
+                        "{\"name\":\"" + plugins[i] + "\",\"version\":\"1.2.3\"}");
+                    File.WriteAllText(Path.Combine(pluginDir, "payload.txt"), "payload-" + plugins[i]);
+                }
+
+                Directory.CreateDirectory(Path.Combine(codexHome, ".tmp", "bundled-marketplaces"));
+                Directory.CreateDirectory(Path.Combine(codexHome, "plugins", "cache", "openai-bundled"));
+                Directory.CreateDirectory(Path.Combine(codexHome, "backups"));
+
+                SyncOptions options = new SyncOptions();
+                options.CodexHome = codexHome;
+                options.SourceBundleOverride = sourceBundle;
+                options.Out = TextWriter.Null;
+                options.Err = TextWriter.Null;
+
+                SyncRunResult first = SyncEngine.Run(options);
+                context.Expect(first.ExitCode == ExitCodesLocator.Ok, "首次 --sync 退出码 0", first.ExitCode.ToString());
+                context.Expect(first.Status == SyncTransaction.StatusCommitted, "首次 --sync 事务 committed", first.Status + "/" + first.Message);
+
+                string cachedManifest = Path.Combine(codexHome, "plugins", "cache", "openai-bundled", "chrome", "1.2.3", ".codex-plugin", "plugin.json");
+                context.Expect(File.Exists(cachedManifest), "缓存被同步到 1.2.3", cachedManifest);
+                context.Expect(!File.Exists(Path.Combine(codexHome, "pending-operation.json")), "同步后无 journal 残留", "journal");
+
+                string[] backupManifests = Directory.GetFiles(Path.Combine(codexHome, "backups"), "backup.json", SearchOption.AllDirectories);
+                context.Expect(backupManifests.Length == 1, "产生 1 份 backup.json", backupManifests.Length.ToString());
+                if (backupManifests.Length == 1)
+                {
+                    BackupManifestDto manifest = JsonRead.FromFile<BackupManifestDto>(backupManifests[0]);
+                    context.Expect(manifest != null && manifest.Status == BackupStates.Complete,
+                        "backup.json status=complete", manifest == null ? "null" : manifest.Status);
+                    context.Expect(manifest != null && manifest.Components != null && manifest.Components.Count >= 3,
+                        "backup.json 记录全部组件",
+                        manifest == null || manifest.Components == null ? "null" : manifest.Components.Count.ToString());
+                }
+
+                string[] stageDirs = Directory.GetDirectories(Path.Combine(codexHome, "plugins", "cache", "openai-bundled"), "*.stage-*");
+                context.Expect(stageDirs.Length == 0, "无 stage 残留", stageDirs.Length.ToString());
+
+                SyncRunResult second = SyncEngine.Run(options);
+                context.Expect(second.ExitCode == ExitCodesLocator.Ok, "二次 --sync 退出码 0", second.ExitCode.ToString());
+                bool skipped = false;
+                for (int i = 0; i < second.Lines.Count; i++)
+                {
+                    if (second.Lines[i].IndexOf("跳过") >= 0) { skipped = true; }
+                }
+                context.Expect(skipped, "二次 --sync 命中缓存并跳过", string.Join(" | ", second.Lines.ToArray()));
             }
             finally
             {
