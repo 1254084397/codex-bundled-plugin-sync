@@ -17,7 +17,8 @@
 | Chrome native host 只读探测 | `Core/NativeHostProbe.cs`、`Core/PathIdentity.cs` | 真机 + 自测：junction 别名判定为 `ok` |
 | 进程/磁盘/备份/journal/EFS 属性 | `ProcessGuard`、`BackupStore`、`OperationJournal`、`EfsProbe` | 真机快照 + 自测 journal=blocked 分支 |
 | 日志根按操作类型 §6.5 | `Cli/CliRunner.cs`、`Core/Logger.cs` | `--check` 日志落 `%LOCALAPPDATA%\CodexPluginSync\logs`，CodexHome 零写入 |
-| fixture 自测 §16.1 | `Core/Fixture.cs`、`Core/SelfTest.cs` | `--selftest` → 12 cases 全绿 |
+| fixture 自测 §16.1 | `Core/Fixture.cs`、`Core/SelfTest.cs` | `--selftest` → 13 cases 全绿（含 recovery/matrix 20 条断言） |
+| **§6.6 恢复矩阵（C# 侧首次）** | `Core/RecoveryMatrix.cs` | 纯逻辑：sync 11 行、rollback 5 行、revert 行 + 终态一致性；`--selftest` 的 `recovery/matrix` 用例逐行断言 |
 
 ## 实测结果（本机）
 

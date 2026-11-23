@@ -184,6 +184,7 @@ namespace CodexPluginSync.Tests
                 ReadOnlyCase(context, baseDirectory);
                 BackupAndEnvironmentCase(context, baseDirectory);
                 JunctionEquivalenceCase(context, baseDirectory);
+                RecoveryMatrixCase(context);
                 ArgumentParsingCase(context);
             }
             finally
@@ -222,6 +223,172 @@ namespace CodexPluginSync.Tests
         }
 
         // ---------------------------------------------------------------- cases
+
+        /// <summary>
+        /// §6.6 矩阵：逐行断言（与脚本层 tests/run-tests.ps1 的 recovery-row* 用例同口径）。
+        /// 这是纯逻辑，不需要 fixture 目录。
+        /// </summary>
+        private static void RecoveryMatrixCase(TestContext context)
+        {
+            context.Begin("recovery/matrix");
+
+            RecoveryMatrix.TargetState s = new RecoveryMatrix.TargetState();
+            s.Component = "cache:browser";
+
+            // 行 1：live=旧、无 backup、无 stage
+            s.LiveExists = true;
+            s.LiveIsOld = true;
+            RecoveryMatrix.Decision d = RecoveryMatrix.ResolveSync(s);
+            ExpectRow(context, "row1", d, 1, RecoveryMatrix.OutcomeAborted, RecoveryMatrix.ActionNone);
+
+            // 行 2：已 staged 未 commit
+            s.StageExists = true;
+            s.StageIsNew = true;
+            d = RecoveryMatrix.ResolveSync(s);
+            ExpectRow(context, "row2", d, 2, RecoveryMatrix.OutcomeAborted, RecoveryMatrix.ActionDeleteStage);
+
+            // 行 3：backup 已生成、live 未动
+            s.StageExists = false;
+            s.StageIsNew = false;
+            s.BackupExists = true;
+            s.BackupIsOld = true;
+            d = RecoveryMatrix.ResolveSync(s);
+            ExpectRow(context, "row3", d, 3, RecoveryMatrix.OutcomeRecovered, RecoveryMatrix.ActionNone);
+
+            // 行 10：三份齐全且未交换
+            s.StageExists = true;
+            s.StageIsNew = true;
+            d = RecoveryMatrix.ResolveSync(s);
+            ExpectRow(context, "row10", d, 10, RecoveryMatrix.OutcomeAborted, RecoveryMatrix.ActionDeleteStage);
+
+            // stage 存在但不完整：必须先落行 11，不得当成 row6/row10 清掉
+            s.StageIsNew = false;
+            d = RecoveryMatrix.ResolveSync(s);
+            ExpectRow(context, "row11-corrupt-stage", d, 11, RecoveryMatrix.OutcomeAttention, RecoveryMatrix.ActionAttention);
+            s.StageExists = false;
+            s.StageIsNew = false;
+
+            // 行 4：live 缺失、backup 旧、stage 完整 → 继续前滚
+            RecoveryMatrix.TargetState m = new RecoveryMatrix.TargetState();
+            m.Component = "marketplace";
+            m.BackupExists = true;
+            m.BackupIsOld = true;
+            m.StageExists = true;
+            m.StageIsNew = true;
+            d = RecoveryMatrix.ResolveSync(m);
+            ExpectRow(context, "row4", d, 4, RecoveryMatrix.OutcomeCommitted, RecoveryMatrix.ActionCompleteSwap);
+
+            // 行 8：live 与 stage 都缺失，只能回填备份
+            m.StageExists = false;
+            m.StageIsNew = false;
+            d = RecoveryMatrix.ResolveSync(m);
+            ExpectRow(context, "row8", d, 8, RecoveryMatrix.OutcomeRecovered, RecoveryMatrix.ActionRestoreBackup);
+
+            // 行 5 / 6：交换完成
+            RecoveryMatrix.TargetState c = new RecoveryMatrix.TargetState();
+            c.Component = "cache:chrome";
+            c.LiveExists = true;
+            c.LiveIsNew = true;
+            c.BackupExists = true;
+            c.BackupIsOld = true;
+            d = RecoveryMatrix.ResolveSync(c);
+            ExpectRow(context, "row5", d, 5, RecoveryMatrix.OutcomeCommitted, RecoveryMatrix.ActionNone);
+            c.StageExists = true;
+            c.StageIsNew = true;
+            d = RecoveryMatrix.ResolveSync(c);
+            ExpectRow(context, "row6", d, 6, RecoveryMatrix.OutcomeCommitted, RecoveryMatrix.ActionDeleteStage);
+
+            // 行 7：本次新建的组件
+            RecoveryMatrix.TargetState n = new RecoveryMatrix.TargetState();
+            n.Component = "cache:computer-use";
+            n.ExistedBefore = false;
+            n.LiveExists = true;
+            n.LiveIsNew = true;
+            d = RecoveryMatrix.ResolveSync(n);
+            ExpectRow(context, "row7", d, 7, RecoveryMatrix.OutcomeCommitted, RecoveryMatrix.ActionNone);
+
+            // 行 9：三份都不存在
+            RecoveryMatrix.TargetState z = new RecoveryMatrix.TargetState();
+            z.Component = "cache:computer-use";
+            d = RecoveryMatrix.ResolveSync(z);
+            ExpectRow(context, "row9", d, 9, RecoveryMatrix.OutcomeAttention, RecoveryMatrix.ActionAttention);
+
+            // 行 11：摘要无法识别
+            RecoveryMatrix.TargetState u = new RecoveryMatrix.TargetState();
+            u.Component = "cache:browser";
+            u.LiveExists = true;
+            u.BackupExists = true;
+            u.BackupIsOld = true;
+            d = RecoveryMatrix.ResolveSync(u);
+            ExpectRow(context, "row11", d, 11, RecoveryMatrix.OutcomeAttention, RecoveryMatrix.ActionAttention);
+
+            // backup 存在但内容不可识别时不得回填
+            RecoveryMatrix.TargetState bad = new RecoveryMatrix.TargetState();
+            bad.Component = "cache:browser";
+            bad.BackupExists = true;
+            d = RecoveryMatrix.ResolveSync(bad);
+            ExpectRow(context, "row11-corrupt-backup", d, 11, RecoveryMatrix.OutcomeAttention, RecoveryMatrix.ActionAttention);
+
+            // 回滚：已生效 → 退回安全快照
+            RecoveryMatrix.TargetState r = new RecoveryMatrix.TargetState();
+            r.Component = "marketplace";
+            r.LiveExists = true;
+            r.LiveIsNew = true;
+            r.SafetyExists = true;
+            r.SafetyIsOld = true;
+            d = RecoveryMatrix.ResolveRollback(r);
+            ExpectRow(context, "rollback-5", d, 5, RecoveryMatrix.OutcomeRecovered, RecoveryMatrix.ActionRestoreSafety);
+
+            // 回滚：live 未动 → 未提交终态
+            r.LiveIsNew = false;
+            r.LiveIsOld = true;
+            r.SafetyExists = false;
+            r.SafetyIsOld = false;
+            d = RecoveryMatrix.ResolveRollback(r);
+            ExpectRow(context, "rollback-2", d, 2, RecoveryMatrix.OutcomeAborted, RecoveryMatrix.ActionNone);
+
+            // 撤回：正常目标统一 reverted，不参与混合终态误判
+            RecoveryMatrix.TargetState v = new RecoveryMatrix.TargetState();
+            v.Component = "cache:browser";
+            v.LiveExists = true;
+            v.LiveIsOld = true;
+            d = RecoveryMatrix.ResolveRevert(v, false);
+            ExpectRow(context, "revert-old", d, 1, RecoveryMatrix.OutcomeReverted, RecoveryMatrix.ActionNone);
+
+            // 撤回：备份内容不可识别时不得回填
+            RecoveryMatrix.TargetState v2 = new RecoveryMatrix.TargetState();
+            v2.Component = "cache:browser";
+            v2.LiveExists = true;
+            v2.LiveIsNew = true;
+            v2.BackupExists = true;
+            d = RecoveryMatrix.ResolveRevert(v2, false);
+            ExpectRow(context, "revert-corrupt-backup", d, 11, RecoveryMatrix.OutcomeAttention, RecoveryMatrix.ActionAttention);
+
+            // 终态一致性：committed + aborted 混合必须报不一致
+            List<RecoveryMatrix.Decision> mixed = new List<RecoveryMatrix.Decision>();
+            mixed.Add(new RecoveryMatrix.Decision(5, RecoveryMatrix.ActionNone, RecoveryMatrix.OutcomeCommitted, "ok"));
+            mixed.Add(new RecoveryMatrix.Decision(1, RecoveryMatrix.ActionNone, RecoveryMatrix.OutcomeAborted, "ok"));
+            context.Expect(RecoveryMatrix.FindInconsistentOutcome(mixed) != null, "一致性：committed+aborted 必须判为不一致", RecoveryMatrix.Describe(mixed));
+
+            List<RecoveryMatrix.Decision> recoveredAndAborted = new List<RecoveryMatrix.Decision>();
+            recoveredAndAborted.Add(new RecoveryMatrix.Decision(5, RecoveryMatrix.ActionRestoreSafety, RecoveryMatrix.OutcomeRecovered, "ok"));
+            recoveredAndAborted.Add(new RecoveryMatrix.Decision(2, RecoveryMatrix.ActionNone, RecoveryMatrix.OutcomeAborted, "ok"));
+            context.Expect(RecoveryMatrix.FindInconsistentOutcome(recoveredAndAborted) != null, "一致性：recovered+aborted 必须判为不一致", RecoveryMatrix.Describe(recoveredAndAborted));
+
+            List<RecoveryMatrix.Decision> same = new List<RecoveryMatrix.Decision>();
+            same.Add(new RecoveryMatrix.Decision(5, RecoveryMatrix.ActionNone, RecoveryMatrix.OutcomeReverted, "ok"));
+            same.Add(new RecoveryMatrix.Decision(1, RecoveryMatrix.ActionNone, RecoveryMatrix.OutcomeReverted, "ok"));
+            context.Expect(RecoveryMatrix.FindInconsistentOutcome(same) == null, "一致性：全部 reverted 应放行", RecoveryMatrix.Describe(same));
+        }
+
+        private static void ExpectRow(TestContext context, string name, RecoveryMatrix.Decision decision, int row, string outcome, string action)
+        {
+            bool ok = decision != null && decision.Row == row && decision.Outcome == outcome && decision.Action == action;
+            string actual = decision == null
+                ? "null"
+                : decision.Row.ToString(System.Globalization.CultureInfo.InvariantCulture) + "/" + decision.Outcome + "/" + decision.Action;
+            context.Expect(ok, name + " → row" + row.ToString(System.Globalization.CultureInfo.InvariantCulture) + "/" + outcome + "/" + action, actual);
+        }
 
         private static void NoUpdateCase(TestContext context, string baseDirectory)
         {
