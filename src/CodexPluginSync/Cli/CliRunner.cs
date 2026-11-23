@@ -40,12 +40,14 @@ namespace CodexPluginSync.Cli
                     return ExitCodes.Ok;
                 case CliOptions.CommandCheck:
                     return RunCheck(options, Console.Out, Console.Error);
+                case CliOptions.CommandSync:
+                    return RunSync(options, Console.Out, Console.Error);
                 case CliOptions.CommandSelfTest:
                     return SelfTest.Run(options.FixtureDirectory, Console.Out, Console.Error);
                 default:
                     Console.Error.WriteLine("Command '" + options.Command +
                         "' is not implemented in this build (M1 increment 1: check only).");
-                    Console.Error.WriteLine("Implemented today: --check, --selftest, --version, --help.");
+                    Console.Error.WriteLine("Implemented today: --check, --sync, --selftest, --version, --help.");
                     return ExitCodes.Error;
             }
         }
@@ -105,6 +107,23 @@ namespace CodexPluginSync.Cli
             }
         }
 
+        public static int RunSync(CliOptions options, TextWriter stdout, TextWriter stderr)
+        {
+            Settings settings = Settings.Load(null);
+            SyncOptions syncOptions = new SyncOptions();
+            syncOptions.CodexHome = options.CodexHomeOverride ?? settings.CodexHome;
+            syncOptions.SourceBundleOverride = options.SourceBundle;
+            syncOptions.Force = options.Force;
+            syncOptions.Out = stdout;
+            syncOptions.Err = stderr;
+
+            SyncRunResult result = SyncEngine.Run(syncOptions);
+            if (result.ExitCode != ExitCodes.Ok && !string.IsNullOrEmpty(result.Message))
+            {
+                stderr.WriteLine(result.Message);
+            }
+            return result.ExitCode;
+        }
         public static string UsageText()
         {
             StringWriter writer = new StringWriter();
@@ -114,7 +133,7 @@ namespace CodexPluginSync.Cli
             writer.WriteLine("Usage:");
             writer.WriteLine("  CodexPluginSync.exe                          GUI (M3; prints this help until then)");
             writer.WriteLine("  CodexPluginSync.exe --check [--json] [--quiet]     read-only check");
-            writer.WriteLine("  CodexPluginSync.exe --sync [--force] [--quiet]     run the sync transaction (not in this build)");
+            writer.WriteLine("  CodexPluginSync.exe --sync [--force] [--source-bundle <dir>]  run the sync transaction (EFS / native host not wired yet)");
             writer.WriteLine("  CodexPluginSync.exe --rollback [--backup <id>]     restore a backup (not in this build)");
             writer.WriteLine("  CodexPluginSync.exe --cleanup-only                 remove stale stages and old logs (not in this build)");
             writer.WriteLine("  CodexPluginSync.exe --export-diag [--out <path>] [--no-redact]   (not in this build)");
