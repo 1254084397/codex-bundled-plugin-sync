@@ -24,7 +24,7 @@
 ## 实测结果（本机）
 
 ```text
---selftest                      → SELFTEST PASS (12 cases)
+--selftest                      → SELFTEST PASS (14 cases)   ← 2026-11-24 构建后实测
 --check（真机）                  → Verdict: ok, Update needed: No, exit 0
 --check --json（stderr 丢弃）     → 单行 JSON 可解析，exitCode=2 时与进程退出码一致
 --bogus                         → exit 1
