@@ -32,7 +32,7 @@
 ## 实测结果（本机）
 
 ```text
---selftest                      → SELFTEST PASS (24 cases)   ← 2026-11-24 构建后实测
+--selftest                      → SELFTEST PASS (26 cases)   ← 2026-11-24 构建后实测
 --check（真机）                  → Verdict: ok, Update needed: No, exit 0
 --check --json（stderr 丢弃）     → 单行 JSON 可解析，exitCode=2 时与进程退出码一致
 --cleanup-only --dry-run（真机）  → 清理计划 114 项，exit 0，未删除任何内容
@@ -44,6 +44,21 @@
 真机 dry-run 暴露的一个保守选择：脚本层产生的 `backups\rollback-before-*` 目录（没有 `backup.json`）
 会被归入“不是本工具创建的目录”而不动。清理器只按 `backup.json` 的 kind/status 认定身份，
 例外只给 `openai-bundled-sync-*` 这个 legacy 前缀，宁可不删。
+
+### 真机写入演练（2026-11-24）：撞到的三个 bug 与一个环境前提
+
+| # | 现象 | 根因 | 修法 |
+| --- | --- | --- | --- |
+| 1 | `--sync` 第一步就 `同步失败：无法加密指定的文件` | AppX 源包里的文件本身带 EFS `Encrypted` 属性；`File.Copy` 把它拷到**未加密**目录会报 `ERROR_ENCRYPTION_FAILED`（6000），拷到加密目录反而正常 | `Installer.CopyFileRobust`：源加密 + 目标未加密时走字节流复制（时间戳手工补回），另留 6000 异常回退；用例 `efs/encrypted-source-copy` |
+| 2 | 交换到 `cache:chrome` 时 `对路径 ...chrome 的访问被拒绝` | `extension-host.exe` 从 `cache\chrome\latest\...` 运行，锁住了待 rename 的目录；而**写入路径根本没调用进程守卫** | `SyncEngine` / `RollbackEngine` 写入前调用 `ProcessGuard.Detect`，命中就退 1 且不写任何东西；用例 `process/guard` |
+| 3 | 交换中途失败后，未动过的组件被报成“退回不完整 → needs-attention” | `Revert` 只按 live 存在 + 备份缺失判定，未区分“本次压根没交换” | 未交换（`swappedOut/swappedIn` 均 false）的组件按“保持原样”处理；退干净时一并清掉 stage |
+
+真机已因此验证到的：失败事务自动 Revert 后 `marketplace` 403 / `browser` 157 回到同步前内容；
+遗留 journal 由 §6.6 恢复器按 row 2 收尾（清 stage、删 journal）。
+
+环境前提（写进文档，不算 bug）：`extension-host` 由 Codex app-server daemon 监督重生，
+停掉一个会再起一个；真正腾出 `cache\chrome` 需要先停 daemon（本次已征得用户同意后停用），
+所以 **`--sync` 的真机成功路径仍未验收**，不能用 fixture 全绿代替。
 
 真机发现并已修复的假阳性：Chrome manifest 指向 `...\chrome\latest\...`，`latest` 是指向版本目录的
 junction。字符串比较会误报 `outdated`（且会去改写一个正确的文件）。现改为 `GetFinalPathNameByHandle`
@@ -62,7 +77,8 @@ C# 侧已接管全部写入命令 `--sync`、`--rollback`、`--cleanup-only`、`
 
 | 缺口 | 归属 | 依据 |
 | --- | --- | --- |
-| 崩溃后自动执行恢复矩阵的**真机**验证（逻辑已在 fixture 上覆盖 `recovery/execute`，但没在真机崩溃现场用） | M1 增量 4 | §6.6 |
+| 崩溃后自动执行恢复矩阵的**真机**验证 | — | 已在真机发生过一次真实恢复（见下），但“强杀进程中”的完整用例仍未做 |
+| `--sync` / `--rollback` 的**真机成功路径**验收 | M1 增量 5 | §10.1：`extension-host` 由 Codex app-server daemon 监督重生，会锁住 `cache\chrome`，目录 rename 被拒 |
 | native host 回滚的“注册表值原本不存在 → 删键”分支（sync 不会建键，故未实现；脚本层已覆盖） | 同上 | §9.4 |
 | WinForms 界面、托盘 | M3 / M4 | §11、§12 |
 | `.cmd` 兼容映射（2→0） | M2 | §2.4 |

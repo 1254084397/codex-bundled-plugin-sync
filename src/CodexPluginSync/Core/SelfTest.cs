@@ -674,6 +674,47 @@ namespace CodexPluginSync.Tests
                     }
                 }
                 context.Expect(hasBackupMissing, "退回失败的原因应写明备份缺失", hasBackupMissing.ToString());
+
+                // 第四段：交换后失败但退回成功 → 必须把 stage 也收掉（journal 已删，不能留垃圾）
+                string live4 = Path.Combine(root, "plugins", "cache", "openai-bundled", "computer-use");
+                Directory.CreateDirectory(live4);
+                File.WriteAllText(Path.Combine(live4, "keep.txt"), "keep");
+                string stage4 = live4 + ".stage4";
+                Directory.CreateDirectory(stage4);
+                File.WriteAllText(Path.Combine(stage4, "new.txt"), "new");
+                string backup4 = Path.Combine(paths.BackupsRoot, "openai-bundled-sync-test4");
+
+                List<SyncTarget> targets4 = new List<SyncTarget>();
+                SyncTarget target4 = new SyncTarget();
+                target4.Component = "cache:computer-use";
+                target4.LivePath = live4;
+                target4.StagePath = stage4;
+                target4.BackupPath = Path.Combine(backup4, "cache-computer-use.previous");
+                target4.ExistedBefore = true;
+                targets4.Add(target4);
+
+                SyncTransactionResult recoveredRun = null;
+                SyncTransaction.FailureInjectionHook = delegate(string point)
+                {
+                    if (point == "after-swap:cache:computer-use")
+                    {
+                        throw new InvalidOperationException("injected after-swap failure (clean revert)");
+                    }
+                };
+                try
+                {
+                    recoveredRun = SyncTransaction.Execute(paths, backup4, "txn-clean-revert", targets4);
+                }
+                finally
+                {
+                    SyncTransaction.FailureInjectionHook = null;
+                }
+
+                context.Expect(recoveredRun != null && recoveredRun.Status == SyncTransaction.StatusRecovered,
+                    "退干净的失败 → recovered", recoveredRun == null ? "null" : recoveredRun.Status + "/" + recoveredRun.Message);
+                context.Expect(File.Exists(Path.Combine(live4, "keep.txt")), "退回后 live 是同步前内容", live4);
+                context.Expect(!Directory.Exists(stage4), "退干净后 stage 已清理", stage4);
+                context.Expect(!File.Exists(paths.JournalPath), "退干净后 journal 已删除", paths.JournalPath);
             }
             catch (Exception ex)
             {

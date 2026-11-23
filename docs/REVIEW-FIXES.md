@@ -234,6 +234,12 @@ E/F 是“显式 `-Scratch` 不得代建父目录”这条修正的专项回归�
   仍未做：native host 回滚的“删键”分支（sync 从不建键）、M3 界面/托盘。
 - 恢复执行与真机崩溃现场：矩阵逻辑在 fixture 上覆盖了行 4/6/9 与终态不一致（`recovery/execute`），
   但**未经真机崩溃演练**（强杀进程后重启恢复）。不得因为 fixture 全绿就当作真机已验证。
+- 真机写入演练（2026-11-24）：撞到并修好三个 bug（EFS 源文件复制报 6000、写入路径未调进程守卫、
+  Revert 把未交换组件当失败），详见 `docs/M1-STATUS.md`。真机上也因此实打实验证了
+  “失败 → 自动 Revert → live 回到同步前内容”与“遗留 journal 按 §6.6 row 2 收尾”。
+- **`--sync` / `--rollback` 的真机成功路径仍未验收**：`extension-host` 由 Codex app-server daemon 监督重生，
+  锁住 `cache\chrome` 使目录 rename 被拒；本次演练在“守卫正确拒绝”这一步结束。
+  要完成需先停 daemon（不是仅关 Chrome），否则不该宣称真机写入已经验过。
 - 回滚与清理的**真机写入**验收尚未做：C# 侧只在临时目录与 fixture 上验证过
   （`rollback/restore`、`rollback/roundtrip`、`rollback/guards`、`cleanup/retention`）；
   真机上只跑了 `--cleanup-only --dry-run`（114 项计划，未删任何东西）。脚本层的真机演练见 §8，两者不能互相代替。

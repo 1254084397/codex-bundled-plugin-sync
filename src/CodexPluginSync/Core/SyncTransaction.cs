@@ -366,6 +366,19 @@ namespace CodexPluginSync.Core
             catch (Exception) { }
             if (allReverted)
             {
+                // 退干净了才清 stage；needs-attention 时 stage 是现场的一部分，必须保留（§6.6 配套约束）。
+                for (int i = 0; i < targets.Count; i++)
+                {
+                    string stage = targets[i].StagePath;
+                    if (string.IsNullOrEmpty(stage) || !Directory.Exists(stage)) { continue; }
+                    try
+                    {
+                        FileAttributes attributes = File.GetAttributes(stage);
+                        bool isReparse = (attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint;
+                        Directory.Delete(stage, !isReparse);
+                    }
+                    catch (Exception) { }
+                }
                 try { JournalStore.Delete(paths); }
                 catch (Exception) { }
             }
