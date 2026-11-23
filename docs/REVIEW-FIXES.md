@@ -231,7 +231,7 @@ E/F 是“显式 `-Scratch` 不得代建父目录”这条修正的专项回归�
 - C# 侧（`src/CodexPluginSync`）**已接管并已验证部分能力**：
   `Core/RecoveryMatrix.cs`（§6.6 矩阵）、`Core/TransactionState.cs`（backup.json/journal 写侧）、
   `Core/SyncTransaction.cs` + `Core/TreeDigest.cs`（§7.2 七阶段编排、CommitStarted 后自动 Revert）
-  已通过 `--selftest`（15 cases）。仍未做：CLI 接入 `--sync`/`--rollback`、robocopy/EFS/native host 的真实 IO、
+  已通过 `--selftest`（17 cases）。已完成：CLI 接入 `--sync`、`Installer`/`SyncEngine` 真实 IO、Chrome native host 写入（§9.4）。仍未做：EFS 接线、`--rollback`、
   `docs/M1-STATUS.md` 的“未实现”表仍然有效。
 - 运行约束（与本次验收不矛盾）：**后续再次执行写入操作**时仍需先关闭 Chrome / Edge / Codex Desktop，
   否则进程守卫会拒绝写入（设计行为）。**本次**真机验收已在彻底退出这些进程后完成，详见 §8。

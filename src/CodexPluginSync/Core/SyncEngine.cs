@@ -10,6 +10,8 @@ namespace CodexPluginSync.Core
         public string CodexHome;
         public string SourceBundleOverride;
         public bool Force;
+        /// <summary>selftest 专用：跳过 Chrome native host（不读注册表、不改真实清单）。</summary>
+        public bool SkipNativeHost;
         public TextWriter Out;
         public TextWriter Err;
     }
@@ -66,6 +68,8 @@ namespace CodexPluginSync.Core
                     appxVersion = package.Version;
                 }
 
+                string chromeVersion = null;
+                NativeHostResult nativeHost = null;
                 List<SyncTarget> targets = new List<SyncTarget>();
                 string runId = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + "-" +
                     Guid.NewGuid().ToString("N").Substring(0, 6);
@@ -107,6 +111,7 @@ namespace CodexPluginSync.Core
                         return result;
                     }
                     string version = manifest.Version;
+                    if (plugin == "chrome") { chromeVersion = version; }
                     string livePath = Path.Combine(paths.CacheParent, plugin);
                     string cachedManifest = Path.Combine(Path.Combine(livePath, version), ".codex-plugin\\plugin.json");
                     if (!options.Force && File.Exists(cachedManifest))
@@ -139,7 +144,23 @@ namespace CodexPluginSync.Core
                 }
 
                 Directory.CreateDirectory(paths.BackupsRoot);
-                SyncTransactionResult transaction = SyncTransaction.Execute(paths, backupDirectory, runId, targets);
+                SyncTransactionResult transaction;
+                if (options.SkipNativeHost || string.IsNullOrEmpty(chromeVersion))
+                {
+                    transaction = SyncTransaction.Execute(paths, backupDirectory, runId, targets);
+                }
+                else
+                {
+                    string chromeVersionForHost = chromeVersion;
+                    transaction = SyncTransaction.Execute(paths, backupDirectory, runId, targets, delegate
+                    {
+                        nativeHost = NativeHostWriter.Apply(codexHome, paths.CacheParent, chromeVersionForHost, backupDirectory);
+                        if (!nativeHost.Skipped && !nativeHost.Applied)
+                        {
+                            throw new InvalidOperationException("Chrome native host 更新失败：" + nativeHost.Reason);
+                        }
+                    });
+                }
                 result.Status = transaction.Status;
                 result.Message = transaction.Message;
                 for (int i = 0; i < transaction.Actions.Count; i++)
@@ -165,7 +186,19 @@ namespace CodexPluginSync.Core
                     output.WriteLine(result.Lines[i]);
                 }
                 output.WriteLine("事务状态：" + transaction.Status + "（备份：" + backupDirectory + "）");
-                output.WriteLine("注意：本 build 尚未接线 EFS 与 Chrome native host，二者状态未改动。");
+                if (nativeHost == null)
+                {
+                    output.WriteLine("Chrome native host：未处理（缺 chrome 版本信息）");
+                }
+                else if (nativeHost.Skipped)
+                {
+                    output.WriteLine("Chrome native host：" + nativeHost.Reason);
+                }
+                else
+                {
+                    output.WriteLine("Chrome native host：已更新为 " + nativeHost.Reason + "（原目标：" + nativeHost.PreviousTargetPath + "）");
+                }
+                output.WriteLine("注意：本 build 尚未接线 EFS（目录加密状态未改动）。");
                 output.WriteLine("Desktop 包版本：" + appxVersion);
                 return result;
             }

@@ -188,6 +188,7 @@ namespace CodexPluginSync.Tests
                 TransactionStateCase(context);
                 SyncTransactionCase(context);
                 SyncEngineCase(context, baseDirectory);
+                NativeHostBoundaryCase(context, baseDirectory);
                 ArgumentParsingCase(context);
             }
             finally
@@ -708,6 +709,7 @@ namespace CodexPluginSync.Tests
                 options.SourceBundleOverride = sourceBundle;
                 options.Out = TextWriter.Null;
                 options.Err = TextWriter.Null;
+                options.SkipNativeHost = true;
 
                 SyncRunResult first = SyncEngine.Run(options);
                 context.Expect(first.ExitCode == ExitCodesLocator.Ok, "首次 --sync 退出码 0", first.ExitCode.ToString());
@@ -745,6 +747,41 @@ namespace CodexPluginSync.Tests
             {
                 try { Directory.Delete(root, true); } catch (Exception) { }
             }
+        }
+
+        /// <summary>§9.4 路径边界：只接受用户目录内、文件名恰为 com.openai.codexextension.json 的清单。不读注册表。</summary>
+        private static void NativeHostBoundaryCase(TestContext context, string baseDirectory)
+        {
+            context.Begin("nativehost/path-boundary");
+
+            string allowed = Path.Combine(baseDirectory, "native-allowed");
+            string outside = Path.Combine(baseDirectory, "native-outside");
+            Directory.CreateDirectory(allowed);
+            Directory.CreateDirectory(outside);
+
+            List<string> roots = new List<string>();
+            roots.Add(allowed);
+
+            string good = Path.Combine(allowed, NativeHostWriter.ManifestFileName);
+            File.WriteAllText(good, "{\"path\":\"x\"}");
+            context.Expect(NativeHostWriter.ValidateManifestPath(good, roots) == null,
+                "允许目录内正确文件名应通过", NativeHostWriter.ValidateManifestPath(good, roots));
+
+            string wrongName = Path.Combine(allowed, "evil.json");
+            File.WriteAllText(wrongName, "{}");
+            context.Expect(NativeHostWriter.ValidateManifestPath(wrongName, roots) != null,
+                "文件名不符必须拒绝", "accepted");
+
+            string external = Path.Combine(outside, NativeHostWriter.ManifestFileName);
+            File.WriteAllText(external, "{}");
+            context.Expect(NativeHostWriter.ValidateManifestPath(external, roots) != null,
+                "越界路径必须拒绝", "accepted");
+
+            context.Expect(NativeHostWriter.ValidateManifestPath("..\\evil\\" + NativeHostWriter.ManifestFileName, roots) != null,
+                "包含 .. 的路径必须拒绝", "accepted");
+
+            context.Expect(NativeHostWriter.ValidateManifestPath("", roots) != null,
+                "空路径必须拒绝", "accepted");
         }
 
         private static void NoUpdateCase(TestContext context, string baseDirectory)

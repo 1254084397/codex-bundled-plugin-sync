@@ -78,6 +78,12 @@ namespace CodexPluginSync.Core
         /// </summary>
         public static SyncTransactionResult Execute(CodexPaths paths, string backupDirectory, string backupId, IList<SyncTarget> targets)
         {
+            return Execute(paths, backupDirectory, backupId, targets, null);
+        }
+
+        /// <summary>afterCommit 在交换完成且摘要复核后、finalize 之前执行；抛异常会走 Revert。</summary>
+        public static SyncTransactionResult Execute(CodexPaths paths, string backupDirectory, string backupId, IList<SyncTarget> targets, Action afterCommit)
+        {
             if (paths == null) { throw new ArgumentNullException("paths"); }
             if (string.IsNullOrEmpty(backupDirectory)) { throw new ArgumentNullException("backupDirectory"); }
             if (targets == null || targets.Count == 0)
@@ -206,6 +212,10 @@ namespace CodexPluginSync.Core
                         result.Status = verifiedRevertOk ? StatusVerifyFailed : StatusNeedsAttention;
                         return result;
                     }
+                }
+                if (afterCommit != null)
+                {
+                    afterCommit();
                 }
                 journal.Phase = JournalPhases.Committed;
                 JournalStore.Write(paths, journal);
