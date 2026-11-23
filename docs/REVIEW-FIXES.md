@@ -176,9 +176,27 @@ build\bin\Release\CodexPluginSync.exe --selftest
 
 ### EFS（§8 真机验收点）
 
-`marketplace` 父目录在本机**本来就已加密**（preEncrypted=True，历史上被旧实现留下的 D-01 遗留状态）。
-本次同步因此 **没有开启 EFS**（enabledByThisRun=False），收尾只做了观察并报告 `result=restored`，
-**没有误解除用户既有加密状态** —— 这正是 §8 要求的"只撤销本次自己的变更"。
+**两段验收：**
+
+1. **既有加密状态保护（`E:\CodexHome` 实机）**：`marketplace` 父目录本来就已加密（preEncrypted=True），
+   本次同步因 `enabledByThisRun=False` **没有开启 EFS**，收尾只观察并报 `result=restored`，
+   没有误解除用户既有加密状态。
+2. **主动 `cipher /e` → `cipher /d` 路径（工作区内未加密 NTFS 临时目录，`tests/efs-acceptance.ps1`）**：
+
+```text
+目标位于工作区内（硬校验）/ volume=D fs=NTFS / preEncrypted=False
+cipher /e   exit=0  encrypted=True
+新建文件   继承加密 = True；加密后本用户仍可正常读写
+Restore(EnabledByThisRun=true)   restored=True  nowEncrypted=False
+Restore(EnabledByThisRun=false)  restored=True  stillEncrypted=True（既有加密不被误解除）
+撤销失败路径（目标不存在）      restored=False + 具体原因
+清理：cipher /d 后删除临时目录，结果 = 干净
+→ EFS 验收通过，exit 0
+```
+
+**这次验收又拓出一个真 bug**：`cipher /d` 在路径不存在时仍返回 0，函数当时会"宣称已恢复"。
+已改为“**观察不到加密属性就不宣称成功**”（`Restored=false` + 具体原因），
+两份脚本的 EFS 收尾同步受益。
 
 ### 真机跑出来的两个 bug（已修 + 已加回归）
 
@@ -191,9 +209,9 @@ build\bin\Release\CodexPluginSync.exe --selftest
 
 ## 9. 仍未验证 / 不做承诺
 
-- **EFS 的 `cipher` 开启/撤销路径**：本次真机验收只覆盖了“既有加密状态不被解除”（preEncrypted=True →
-  enabledByThisRun=False → 收尾仅观察）。`cipher /e` 实际开启与 `cipher /d` 实际撤销这两条路径，
-  在当前机器上因为目录本来就已加密而**未被触发**，仍需在未加密目录上做实机验收（fixture 不算数）。
+- **EFS**：`cipher /e` 开启、继承、`cipher /d` 撤销、失败上报已在工作区内未加密临时目录上验收通过
+  （`tests/efs-acceptance.ps1`）。仍需注意的边界：真机 `marketplace` 目录在本机已加密，
+  所以“在真实 CodexHome 上触发开启路径”依然未发生；D-01（是否应长期加密）仍待结论。
 - **D-01**（marketplace 父目录是否该长期加密）仍待结论；当前实现只撤销本次自己的开启。
 - **Codex 是否会自己重建 `chrome\latest`**：同步后新缓存来自 AppX 源包（不含该 junction），
   下次启动 Codex Desktop 时需确认它是否重建别名（目前清单指向版本目录，不依赖别名）。

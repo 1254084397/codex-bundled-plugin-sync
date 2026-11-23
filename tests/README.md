@@ -19,6 +19,16 @@ powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 -Filter rollback   
 powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 -KeepWork          # 保留 fixture 现场
 ```
 
+另有一个独立的真机脚本（不属于 fixture 套件，会真实调用 `cipher`）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tests\efs-acceptance.ps1
+```
+
+它只在工作区内的**未加密 NTFS 临时目录**上执行 `cipher /e` → 继承检查 → `cipher /d`，
+验证“主动开启/撤销”与“既有加密状态不被误解除”，并在 `finally` 清理；
+目标位于 `CODEX_HOME` 下或已加密时直接拒绝执行。
+
 退出码：0 = 全绿，1 = 有失败。
 
 ## 用例与契约对照

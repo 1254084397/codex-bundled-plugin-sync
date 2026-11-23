@@ -356,7 +356,14 @@ function Restore-CodexSyncEfsState {
         } catch {
             $result.NowEncrypted = $null
         }
-        if ($null -ne $result.NowEncrypted -and $result.NowEncrypted -ne $PreEncrypted) {
+        if ($null -eq $result.NowEncrypted) {
+            # 观察不到就不宣称成功（EFS 验收里就是用这个分支拓出来的：
+            # 路径不存在时 cipher 仍报 0，但属性读不出来，不能当成“已恢复”）。
+            $result.Restored = $false
+            $result.Message = "无法确认 EFS 状态（读不到 $Path 的加密属性），不宣称已恢复。"
+            return $result
+        }
+        if ($result.NowEncrypted -ne $PreEncrypted) {
             $result.Restored = $false
             $result.Message = "EFS 状态与本次进入时不同（原=$PreEncrypted 现=$($result.NowEncrypted)），不是本次改的，未处理。"
         }
@@ -377,7 +384,13 @@ function Restore-CodexSyncEfsState {
     } catch {
         $result.NowEncrypted = $null
     }
-    if ($null -ne $result.NowEncrypted -and $result.NowEncrypted -ne $PreEncrypted) {
+    if ($null -eq $result.NowEncrypted) {
+        # cipher 退出码为 0 不代表真的改好了（路径不存在时它也会报 0），必须能观察到。
+        $result.Restored = $false
+        $result.Message = "撤销后读不到 $Path 的加密属性，无法确认已恢复。"
+        return $result
+    }
+    if ($result.NowEncrypted -ne $PreEncrypted) {
         $result.Restored = $false
         $result.Message = "撤销后加密状态仍不匹配（原=$PreEncrypted 现=$($result.NowEncrypted)）。"
     }
