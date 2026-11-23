@@ -1,3 +1,10 @@
 *.log
 *.tmp
 .DS_Store
+
+# test fixture workspace created by tests/run-tests.ps1
+tests/.work/
+
+# C# 构建产物（发布目录只有 1 个 exe，不入库）
+build/bin/
+build/obj/

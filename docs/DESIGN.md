@@ -1,8 +1,21 @@
 # 设计文档：Codex Bundled Plugin Sync
 
-> 状态：**v0.2 — 契约冻结（M0）**，2026-06
+> 状态：**v0.3 — 契约冻结（M0）**，2026-06
 > 适用：本仓库的图形界面（EXE）重构
 > 相关：[README](../README.md) · [scripts/](../scripts/) · [sync-codex-bundled.cmd](../sync-codex-bundled.cmd)
+
+**v0.3 相对 v0.2 的修订（M1 开工门槛评审）**
+
+| # | 修订 | 位置 |
+| --- | --- | --- |
+| 1 | 新增"journal 只是提示、文件系统是唯一事实源"规则，并给出逐组件的 (live, backup, stage) 组合状态恢复矩阵，每行唯一动作 | §6.6 |
+| 2 | journal 增加 `operationKind`，回滚拥有自己的状态机与阶段名 | §6.4、§7.3 |
+| 3 | 明确日志根由操作类型决定：`--check` 不写 CodexHome，且不执行 EFS 能力探测 | §6.5、§7.1 |
+| 4 | 备份完成判据闭合：每个组件移入后立即校验，`complete` 是合成判据 | §6.3、§7.2 |
+| 5 | 清理/保留策略去掉自相矛盾，统一以 `backup.json` 的 `kind`/`status` 判定，不认目录名前缀 | §7.4 |
+| 6 | Native host 回滚按"原来是否存在"决定恢复还是删除，空串不等于不存在 | §9.4 |
+| 7 | EFS 探测的副作用与残留处置成契约；D-01 降级为"只撤销本次自己的变更" | §8.1、§8.2、§18.2 |
+| 8 | AppX 包选择规则改为确定性排序 + 逐候选回落 | §7.1 |
 
 **v0.2 相对 v0.1 的修订（按评审意见）**
 
@@ -118,7 +131,7 @@ Codex 运行时并不直接从安装目录加载插件，而是先用一份"物�
 | C-3 备份模型 | 组件快照，只记录实际改动的组件；回滚按快照执行，不硬编码组件集合 | §6.3 |
 | C-4 退出码 | `0` 成功/无需更新 · `1` 执行错误 · `2` 仅 `--check` 表示需要更新 | §13 |
 | C-5 JSON | 顶层 `schemaVersion`，`--json` 时 stdout 只有 JSON | §13.2 |
-| C-6 EFS | 记录操作前状态、本次是否启用、结束时恢复；不得用 `File.Copy` 替代 | §8 |
+| C-6 EFS | 记录操作前状态与本次是否启用；仅撤销本次自己的开启，不改变用户既有状态（D-01）；不得用 `File.Copy` 替代 | §8 |
 | C-7 NativeHost | Chrome 默认启用；Edge 未实测前不写注册表 | §9 |
 | C-8 脱敏 | 诊断包默认脱敏并附 `manifest.json` | §7.5 |
 | C-9 进程关闭 | 默认优雅关闭；强制结束需单独确认并记日志 | §10 |
@@ -280,7 +293,7 @@ docs/DESIGN.md                  # 本文档
       "chrome": { "state": "outdated", "registered": true, "manifestPath": "...", "targetPath": "..." },
       "edge":   { "state": "not-checked", "registered": null }
     },
-    "efs": { "stagingParentEncrypted": false, "encryptionSupported": true },
+    "efs": { "stagingParentEncrypted": false, "encryptionSupported": null },   // --check 不探测能力，只能为 null
     "lockingProcesses": [ { "name": "chrome", "pid": 1234, "hasWindow": true } ],
     "fileLocks": [],
     "disk": [ { "drive": "D:", "freeBytes": 45210000000 } ],
@@ -309,6 +322,8 @@ docs/DESIGN.md                  # 本文档
   "keepBackups": 1,
   "staleStageHours": 24,
   "keepLogDays": 30,
+  "partialBackupRetentionDays": 7,
+  "failedBackupRetentionDays": 30,
   "minimumFreeGB": 1,
   "extraLockingProcesses": [],
   "allowForceClose": false,
@@ -347,6 +362,8 @@ docs/DESIGN.md                  # 本文档
       "fileCount": 260,
       "sizeBytes": 18342117,
       "filesSha256": "3f9c…",           // 排序后的 (相对路径, sha256) 列表摘要
+      "verifyState": "ok",             // ok | missing | mismatch（移入备份后立即校验的结果）
+      "verifiedUtc": "2026-06-12T06:32:07Z",
       "fromVersions": [ { "name": "browser", "version": "1.3.2" } ],
       "toVersions":   [ { "name": "browser", "version": "1.4.0" } ]
     },
@@ -382,8 +399,26 @@ docs/DESIGN.md                  # 本文档
 - `components` 为空时不允许写 `status: complete`（没有改动就不该有备份）。
 - `filesSha256` 复用 §7.2 的校验遍历结果，不额外读盘。
 - `backupPath` 为 `null` + `existedBefore:false` 表示"本次新建"，回滚语义是删除。
-- `status: partial` 表示两种情形：同步未走到 `Committed` 就中断（骨架已建、内容未填完），或备份过程本身失败。**UI 中不可恢复**，默认保留 `keepLogDays` 后随清理回收。
 - **备份内容的写入时机**：`BackupCreated` 只建骨架（目录、`backup.json`、空间预检），原 live 内容在该组件进入 `CommitStarted` 时才移入 `backupPath`。这样 `Verified` 之前 live 完全未被触碰，且不产生额外的全量拷贝 IO（避免备份占用翻倍）。
+
+**校验与完成判据（v0.3 闭合）**
+
+```text
+每个组件 live → backupPath 移动完成后，立即：
+  1 重新枚举 backupPath，比对 fileCount / sizeBytes
+  2 重算 filesSha256，与移动前记录的摘要比对
+  3 通过 → verifyState=ok, verifiedUtc=now；不通过 → verifyState=mismatch，写盘即落定
+```
+
+| 条件 | status | 回滚可用性 |
+| --- | --- | --- |
+| 所有组件的 `verifyState=ok` **且** 所有新 live 树摘要通过 | `complete` | 可用 |
+| 任一组件 `verifyState!=ok`，或未走到 `Committed` | `partial` | 拒绝（§7.3 第 2 步） |
+| 移动/校验过程抛出异常，内容不可信 | `verify-failed` | 拒绝 |
+
+- `status: complete` 是**合成判据**，不是某个步骤结束时顺手写下的字符串；任何组件未通过校验都不得进入 `Committed`（§7.2）。
+- `components` 为空时不允许写 `status: complete`。
+- `status: partial` / `verify-failed` 表示骨架已建但内容不可信。**UI 中不可恢复**；保留规则见 §7.4，不再使用"默认保留 keepLogDays 后回收"这类与 §7.4 冲突的表述。
 
 ### 6.4 操作日志与状态机（C-1）
 
@@ -392,17 +427,24 @@ docs/DESIGN.md                  # 本文档
 ```jsonc
 {
   "schemaVersion": 1,
+  "operationKind": "sync",             // sync | rollback（v0.3 新增，决定恢复走哪套阶段名）
   "operationId": "20260612-143200",
   "seq": 7,
   "updatedUtc": "2026-06-12T06:32:07Z",
   "phase": "commit-started",
   "backupId": "20260612-143200",
+  "safetyBackupId": null,               // rollback 专用：kind=rollback-safety 的快照 id
   "appxVersion": "26.1.2",
   "targets": [
     { "component": "marketplace", "stagePath": "...stage-20260612-143200", "livePath": "...openai-bundled",
-      "swappedOut": true, "swappedIn": false },
-    { "component": "cache:chrome", "stagePath": "...", "livePath": "...", "swappedOut": false, "swappedIn": false }
+      "backupPath": "...backups\\20260612-143200\\marketplace.previous",
+      "oldDigest": "3f9c…", "newDigest": "a71e…", "existedBefore": true,
+      "swappedOut": true, "swappedIn": false, "verifiedUtc": "2026-06-12T06:32:07Z" },
+    { "component": "cache:chrome", "stagePath": "...", "livePath": "...", "backupPath": "...",
+      "oldDigest": "…", "newDigest": "…", "existedBefore": true,
+      "swappedOut": false, "swappedIn": false, "verifiedUtc": null }
   ],
+  "efs": { "preEncrypted": false, "enabledByThisRun": true, "restoredUtc": null },
   "nativeHost": [ { "browser": "chrome", "applied": false } ]
 }
 ```
@@ -453,9 +495,42 @@ stateDiagram-v2
 - 每次迁移前先写新 phase，再执行动作（write-ahead）；动作失败则 phase 已指向"正在做"，恢复逻辑能识别。
 - `seq` 单调递增，用于识别被截断的写入。
 
+**回滚阶段（v0.3 新增，`operationKind=rollback`）**
+
+回滚本身也是多步移动，必须有自己的 journal 与阶段名，共用同一 schema：
+
+```text
+rollback-preflight → rollback-safety-created → rollback-commit-started
+                   → rollback-committed → rollback-finalized
+```
+
+| 阶段 | 进入条件 | 已完成的事实 |
+| --- | --- | --- |
+| `rollback-preflight` | 启动 | 备份可选、`status=complete`、逐组件备份内容已校验 |
+| `rollback-safety-created` | 预检通过 | 当前 live 已**完整**复制进 `kind=rollback-safety` 快照并校验通过 |
+| `rollback-commit-started` | 安全快照落定 | 从此不可取消，**只允许移动 live** |
+| `rollback-committed` | 所有组件已换上备份内容 | 目录层已回滚 |
+| `rollback-finalized` | native host 已恢复 + 逐组件校验通过 | 删除 journal |
+
+硬规则：
+
+1. **安全快照复制完成并校验通过之前，一行 live 都不允许移动**（v0.2 只写了"建快照"，没约束校验时机）。
+2. `rollback-finalized` 之前的逐组件校验必须包含 **native host 项**，否则会出现"目录回去了、注册表还指着新版、journal 已清除"。
+3. 回滚自身崩溃后的恢复走 §6.6 同一矩阵（`livePath` 侧是 live，`backupPath` 侧是备份内容，`stagePath` 位置由安全快照代替）。
+
 ### 6.5 日志格式
 
-沿用现有路径：`CodexHome\logs\sync-openai-bundled-<yyyyMMdd-HHmmss>.log`，行首 `[HH:mm:ss]`，结构化字段在同一行末尾：
+日志根由**操作类型**决定，这是 v0.3 的硬约束（v0.2 在此处自相矛盾：既要求 `--check` 不写 CodexHome，又把日志固定在 `CodexHome\logs`）：
+
+| 操作 | 日志根 | 文件名 |
+| --- | --- | --- |
+| `--check`（含 GUI 自动检查） | `%LOCALAPPDATA%\CodexPluginSync\logs` | `check-<yyyyMMdd-HHmmss>.log` |
+| `--sync` / `--rollback` / `--cleanup-only` | `CodexHome\logs` | `sync-openai-bundled-<stamp>.log` / `rollback-<stamp>.log` |
+| `--export-diag` | 无新日志（只收集） | — |
+
+`--check` 如果连 `%LOCALAPPDATA%` 日志也写不了，就只输出 stdout/stderr，**不得因此失败**。
+
+行首 `[HH:mm:ss]`，结构化字段在同一行末尾：
 
 ```
 [14:32:06] phase=verify file=128/260 result=ok
@@ -465,6 +540,43 @@ stateDiagram-v2
 
 日志仅追加，不轮转覆盖；轮转交给清理流程。
 
+### 6.6 崩溃恢复的事实源与组合状态矩阵（v0.3 新增，P1）
+
+v0.2 的恢复规则残缺在于：它假设 `journal.targets[].swappedIn` 能代表磁盘真相。但"动作已执行、记录尚未更新"的窗口客观存在：
+
+```text
+写 journal(commit-started) → 执行 live → backup → 【此时崩溃】→ 本应写 swappedOut=true
+```
+
+因此定下三条硬规则：
+
+1. **journal 只是提示，文件系统是唯一事实源。** 恢复时不得仅凭 `swappedOut`/`swappedIn` 推导状态。
+2. **每个组件的恢复判定输入是三元组的存在性 + 树摘要**：`livePath`、`backupPath`、`stagePath`（回滚时第三项由 `kind=rollback-safety` 快照路径代替）。摘要取自 journal 的 `oldDigest`/`newDigest` 与 `backup.json` 的 `filesSha256`；摘要不匹配即视为"内容不可识别"。
+3. **矩阵必须全覆盖且每行唯一动作**；任何一行都不匹配 → `needs-attention`，保留 journal 与快照，提示导出诊断，绝不猜。
+
+矩阵（L=live，B=backup，S=stage；"旧/新"指摘要与 `oldDigest`/`newDigest` 一致）：
+
+| # | L | B | S | 解读 | 唯一动作 | 终态 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 旧 | 无 | 无 | 尚未备份、未交换 | 无操作（live 未动） | `Aborted` |
+| 2 | 旧 | 无 | 新（完整） | 已 staged、未 commit | 删除 S | `Aborted` |
+| 3 | 旧 | 旧 | 无 | 备份已生成但 live 未动 | 删 S（无），保留 B 作回滚点 | `Recovered` |
+| 4 | 无 | 旧 | 新（完整） | 交换第 1 步完成、第 2 步未做 | S → L，校验；失败则 B → L | `Recovered` / `needs-attention` |
+| 5 | 新 | 旧 | 无 | 交换完成 | 无操作 | `Committed` → 继续收尾 |
+| 6 | 新 | 旧 | 新（残留） | 完成但 stage 未清 | 删 S | `Committed` → 继续收尾 |
+| 7 | 新 | 无 | 无 | `existedBefore=false` 的新建组件 | 无操作 | `Committed` → 继续收尾 |
+| 8 | 无 | 旧 | 无 | 交换中途 stage 丢失 | B → L，校验 | `Recovered` / `needs-attention` |
+| 9 | 无 | 无 | 无 | 没有任何副本 | 不得自动处理 | `needs-attention` |
+| 10 | 旧 | 旧 | 新（完整） | 三份齐全且未交换 | 删除 S，保留 B | `Aborted` |
+| 11 | 其他（摘要既非旧也非新 / 树损坏） | 任意 | 任意 | 内容不可识别 | 不得自动处理 | `needs-attention` |
+
+配套约束：
+
+- 每个组件的迁移必须是**整目录 rename/move**，禁止逐文件写入 live——否则矩阵的"完整旧版/完整新版"不变量无法成立。
+- `needs-attention` 时必须保留：journal、备份目录、stage（若存在），并在 UI 与 `--json` 的 `verdict` 里显式暴露为 `blocked`。
+- 恢复动作本身也要写日志（`phase=recover component=… row=4 result=ok`），便于事后对账。
+- `--check` 只读取并报告 journal 与矩阵初判，**不执行任何恢复动作**。
+
 ---
 
 ## 7. 核心流程
@@ -472,7 +584,7 @@ stateDiagram-v2
 ### 7.1 检查（只读）
 
 ```text
-1 定位 AppX（PackageManager，失败回落 Get-AppxPackage）→ 记录 packageFullName + version
+1 定位 AppX（确定性选择，见下）→ 记录 packageFullName + version
 2 校验必需路径（sourceBundle / marketParent / CodexHome）
 3 读 Desktop 侧插件清单（plugins\*\.codex-plugin\plugin.json）
 4 读本地 Marketplace 清单
@@ -486,7 +598,30 @@ stateDiagram-v2
 
 **为什么用 `.materialization-key` 而不是"AppX 里有什么就同步什么"**：AppX 包内存在不参与持久化的插件（内部/临时），按目录比对会造成"每次检查都提示更新"的假阳性。这是现有实现最关键的正确性设计，必须保留。
 
-只读性约束：检查阶段不创建目录、不写日志到 `CodexHome`（日志写 `%LOCALAPPDATA%`），不改注册表。
+只读性约束（v0.3 收紧）：检查阶段**不得**：
+
+- 在 `CodexHome` 下创建任何文件或目录（包括 `logs`、`backups`、stage 目录）；实现上禁止调用任何 `EnsureDirectories()` 类辅助方法；
+- 向 `CodexHome` 写日志（日志根见 §6.5）；
+- 执行 EFS 能力探测（探测需要建临时文件，见 §8.1）；只能读 `Encrypted` 属性；
+- 写注册表、修 manifest、删除 stage、执行恢复动作；
+- `--json` 时往 stdout 写任何非 JSON 内容。
+
+后置断言（必须在 `--selftest` 覆盖）：对 `CodexHome` 子树做"相对路径 + 长度"指纹，`--check` 前后必须逐字节一致。
+
+**AppX 包选择规则（v0.3 新增，确定性排序）**
+
+同一台机器可能存在多个 `OpenAI.Codex` 包（旧版本、其他用户、framework/resource 包）。选择必须是确定性的，否则不同机器会得到不同源目录：
+
+```text
+1 过滤：当前用户已注册（Get-AppxPackage 无 -AllUsers）、IsFramework=false、
+       非 resource-only、架构与当前进程/OS 架构匹配
+2 排序：Version 降序 → InstallLocation 存在 → app\resources\plugins\openai-bundled 存在
+3 依次尝试候选，直到找到可读的 openai-bundled；全部失败才报"未安装 / 路径缺失"
+4 版本以包版本为准；目录内 plugin.json 版本仅用于对账，两者不一致时日志 WARN
+   并在 StateSnapshot 里同时报告（不得静默取其中一个）
+```
+
+回落策略：`PackageManager` 查询抛异常或返回空时使用 `Get-AppxPackage` 子进程；两条路径必须返回同一结构，并写入日志的是哪一条生效。
 
 ### 7.2 同步事务（状态机驱动）
 
@@ -501,64 +636,99 @@ Staged        robocopy → stage（含 §8 的 EFS 序列）
               ↓
 Verified      SHA-256 全量比对（进度事件）+ 计算 filesSha256
               ↓ 写 journal(phase=commit-started)
-CommitStarted 逐组件：先移 live → backupPath（置 swappedOut=true），再移 stage → live（置 swappedIn=true）
+CommitStarted 逐组件：先移 live → backupPath（置 swappedOut=true）→ **立即重算摘要校验**
+              → 再移 stage → live（置 swappedIn=true）；摘要比对通过才置 verifiedUtc
               ↓
-Committed    写 backup.json(status=complete, components=实际改动项)
+Committed    仅当所有组件 verifyState=ok 且新 live 树摘要通过：
+              写 backup.json(status=complete, components=实际改动项)
+              否则写 status=verify-failed 并终止（不得进入 Finalized）
               ↓
-Finalized    处理 native host → 删除 journal → 事件完成
+Finalized    处理 native host（含 §9.4 存在性位）→ 删除 journal → 事件完成
 ```
 
-**任何阶段失败：**
+**任何阶段失败（v0.3 修订）：**
+
+失败后的处置不再按"journal 标记"推导，而是按 §6.6 矩阵对每个受影响组件独立判定（盘中状态为事实）。阶段层面只决定"还要不要继续做"：
 
 | 失败位置 | 动作 | 终态 |
 | --- | --- | --- |
-| `Preflight` / `Planned` | 不移动任何 live | `Aborted` |
-| `BackupCreated` / `Staged` / `Verified` | 删除 stage 与未填充的备份骨架，live 未动 | `Aborted` |
-| `CommitStarted` / `Committed` | 按 journal 的 `swappedIn` 逆序还原，能还原则还原，不能则保留 journal 并标记需要人工介入 | `Recovered` 或 `needs-attention` |
+| `Preflight` / `Planned` | 不移动任何 live；若已建骨架则删骨架 | `Aborted` |
+| `BackupCreated` / `Staged` / `Verified` | 删 stage 与未填充的备份骨架，live 未动 | `Aborted` |
+| `CommitStarted` 之后 | 逐组件套用 §6.6 矩阵；全部回到"完整旧版" → `Recovered`；任何一行落到 `needs-attention` → 停止并暴露 | `Recovered` / `needs-attention` |
+| 备份校验未通过（`verifyState!=ok`） | 不得进入 `Committed`；按 `partial`/`verify-failed` 收尾 | `Aborted` |
 
 **关键不变量：**
 
-1. 任何时刻，每个组件的 live 目录要么是完整旧版本、要么是完整新版本，不出现混合内容。
+1. 任何时刻，每个组件的 live 目录要么是完整旧版本、要么是完整新版本，不出现混合内容（依靠整目录 rename）。
 2. `Verified` 之前 live 完全未被触碰。
 3. `CommitStarted` 之后不存在"取消"，只有"完成"或"恢复"。
-4. `needs-attention`（恢复也失败）必须显式暴露给用户，不静默留在半状态。
+4. `needs-attention`（恢复也失败或矩阵无匹配行）必须显式暴露给用户，不静默留在半状态。
+5. **`status=complete` 只在所有组件备份树与新 live 树均校验通过后才允许写**；反过来，任何 `verifyState!=ok` 都必须阻止进入 `Committed`。
 
-**启动时的恢复分支：**
+**启动时的恢复分支（阶段层派发，组件层由 §6.6 决定）：**
 
-| journal.phase | 判定 | 动作 |
-| --- | --- | --- |
-| `planned` / `backup-created` / `staged` / `verified` | 尚未交换 | 提示"上次同步未完成"，一键删除 stage 与备份骨架（live 未受影响） |
-| `commit-started` / `committed` | 可能部分交换 | 逐 `targets`：# swappedIn 且 live 存在新内容 → 已完成；# swappedIn=false 且 stage 仍在 → 用 stage 补齐或回滚 stage；# 冲突 → 提示"状态不明"，提供"从 backupId 整体回滚"与"导出诊断" |
-| `finalized`（journal 残留） | 收尾中断 | 补写 `backup.json`（若缺）后删除 journal |
-| journal 损坏/无法解析 | — | 不自动删除；提示路径并要求选择"回滚到最新完整备份"或"忽略" |
+| journal.phase | `operationKind` | 判定 | 动作 |
+| --- | --- | --- | --- |
+| `preflight` / `planned` | sync | 尚未建骨架 | 删残留骨架与 journal → `Aborted` |
+| `backup-created` / `staged` / `verified` | sync | 尚未交换 | 删 stage 与未填充骨架 → `Aborted` |
+| `commit-started` / `committed` | sync | 可能部分交换 | 逐组件跑 §6.6 矩阵 |
+| `finalized`（journal 残留） | sync | 收尾中断 | 补写 `backup.json`（若缺）后删除 journal |
+| `rollback-preflight` / `rollback-safety-created` | rollback | 安全快照已定、live 未动 | 删未完成的回滚骨架 → `Aborted` |
+| `rollback-commit-started` / `rollback-committed` | rollback | 目录层可能已部分回滚 | 逐组件跑 §6.6 矩阵（S 位由安全快照代替）；未完成 native host 恢复则先补再清 journal |
+| 任何 phase | 任意 | journal 损坏/无法解析 | 不自动删除；提示路径并要求选"回滚到最新完整备份"或"忽略" |
 
-### 7.3 回滚（按快照执行）
+### 7.3 回滚（按快照执行，自有状态机）
 
 ```text
-1 选择备份：--backup <id> 或默认最新 status=complete
-2 读 backup.json → 得到 components 与 nativeHost 列表；status!=complete 直接拒绝
-3 逐组件校验：existedBefore=true → backupPath 必须存在且 fileCount/size 匹配
+1 选择备份：--backup <id> 或默认最新 status=complete（按 backup.json 的 createdUtc，不按目录名）
+2 读 backup.json → components 与 nativeHost；status!=complete 直接拒绝（partial / verify-failed 不可回滚）
+3 逐组件校验：existedBefore=true → backupPath 存在且 fileCount/size/filesSha256 全匹配
               existedBefore=false → 不需要 backupPath（回滚语义=删除）
-4 建 rollback-safety 快照（当前 live 状态，写自己的 backup.json，kind=rollback-safety）
-5 交换：当前 live → 安全快照；备份内容 → live；existedBefore=false 的组件删除
-6 还原 native host：manifest 文件内容 + 注册表默认值（按记录的原值）
-7 校验：每个受影响组件的 manifest 可读
-8 失败 → 逆序撤销已移动项（保留现有脚本的恢复思路），仍失败则保留两个快照并报错
+   → 写 journal(operationKind=rollback, phase=rollback-preflight)
+4 建 rollback-safety 快照（当前 live），写完立即校验树摘要
+   → 校不过就不允许继续；通过了才写 journal(phase=rollback-safety-created)
+5 写 journal(phase=rollback-commit-started) → 逐组件：live → 安全快照；备份内容 → live
+   existedBefore=false 的组件：live → 安全快照，然后删除
+6 native host 恢复：manifest 字节 + 注册表值（按 §9.4 的存在性位）
+7 逐组件校验（目录 manifest 可读 **且** native host 项已还原）
+   → 写 journal(phase=rollback-committed) → 写安全快照 backup.json(status=complete)
+   → 写 journal(phase=rollback-finalized) → 删除 journal
+8 失败/崩溃 → 走 §6.6 矩阵；不可自动恢复则保留 journal 与两个快照 → needs-attention
 ```
 
-与现状的差异：组件集合由快照决定，**不再要求三个缓存同时存在**；支持任意 `backupId`。
+与 v0.2 的差异：
+
+- 组件集合由快照决定，**不再要求四个备份同时存在**（旧布局 `marketplace.previous` / `cache-*.previous` 作为 legacy 子集只读兼容）；
+- 支持任意 `backupId`；
+- 安全快照**校验通过之前不动 live**；
+- 回滚有自己的 journal，强杀后能区分"live 已移走但备份未回"与"部分组件已回滚"。
 
 ### 7.4 清理
 
-保持现有安全策略（路径越界防护、junction 不递归、只删自己创建的命名模式）：
+保持现有安全策略（路径越界防护、junction 不递归、只删自己创建的命名模式）。v0.3 先统一命名与归属，否则清理器和回滚选择器会互相踩：
+
+| 目录 / 文件 | 归属者 | 命名 | 身份认定依据 |
+| --- | --- | --- | --- |
+| 同步备份 | Sync | `backups\<backupId>\` | `backup.json.kind=sync` |
+| 回滚安全快照 | Rollback | `backups\<backupId>\` | `backup.json.kind=rollback-safety` |
+| 旧版布局备份 | legacy | `backups\openai-bundled-sync-*` | 目录名前缀（仅兼容读取） |
+| stage | Sync | `<marketParent>\openai-bundled.stage-*`、`<cacheParent>\<plugin>.stage-*` | **只看 journal.targets，不猜目录名** |
+| 日志 | 按操作类型 | `CodexHome\logs\*.log`、`%LOCALAPPDATA%\CodexPluginSync\logs\*.log` | 文件名前缀 |
+
+**保留规则（v0.3 解决 v0.2 中"partial 保留 keepLogDays"与"partial 永不删"的直接矛盾）**：
 
 | 目标 | 规则 |
 | --- | --- |
-| 空备份目录 | 无条件删除（失败运行残留） |
-| `openai-bundled-sync-*` / 新 `backups/<id>` | 按时间倒序保留 `keepBackups` 个，且**永不删除当前 journal 引用或 `status=partial` 的诊断样本**（后者需显式勾选） |
-| `rollback-before-*` / `rollback-safety` | 保留最新 1 个 |
-| `openai-bundled.stage-*` | 早于 `staleStageHours` 才删；journal 引用的不删 |
-| `sync-openai-bundled-*.log` | 早于 `keepLogDays` 才删 |
+| 空备份目录 | 无条件删除（失败运行的残留） |
+| 当前 journal 引用的任何目录（stage / backup / safety） | **永不自动删除** |
+| `status=complete` 的备份 | 按 `createdUtc` 倒序保留 `keepBackups` 个；`keepBackups` **只统计 complete** |
+| `status=partial` 的备份 | 不被 journal 引用时，超过 `partialBackupRetentionDays`（新增设置，默认 7）才删；被引用则永不自动删 |
+| `status=verify-failed` 的备份 | 单独按 `failedBackupRetentionDays`（默认 30）保留，不计入 `keepBackups` |
+| `kind=rollback-safety` 快照 | 保留最新 1 个（当前 journal 引用的除外） |
+| stage 目录 | 只删"存在超过 `staleStageHours` **且** 不被任意 journal 引用"的 |
+| 日志 | 早于 `keepLogDays` 才删；当前运行正在写的日志不删 |
+
+清理器不得依赖目录名前缀判断身份（回滚选择器同理）：**一律读 `backup.json` 的 `kind`/`status`**，只有 legacy 目录才回退到前缀判断。
 
 ### 7.5 诊断导出与脱敏（C-8）
 
@@ -601,7 +771,8 @@ Finalized    处理 native host → 删除 journal → 事件完成
 | 观察 | 要求 |
 | --- | --- |
 | 源文件带 EFS/Application Protected 属性 | 复制后 stage 树内**不得**残留 Encrypted 属性（现有实现会复查并抛错，保留） |
-| 现有实现会对 `marketParent` 永久开启 EFS，不恢复 | 新实现必须记录操作前状态，并在结束时**恢复原状态** |
+| 现有实现会对 `marketParent` 永久开启 EFS，不恢复 | 新实现必须记录 `preEncrypted` 与 `enabledByThisRun`，并在结束/失败路径**撤销本次自己的开启**（回到 `preEncrypted`）。是否应长期保持加密属 D-01，未结论前**不主动改变用户的既有状态** |
+| EFS 能力探测本身会建临时文件、因此不是只读操作 | 探测只在 Sync/Rollback 的 Preflight 执行，`--check` 一律不探测（§7.1）；探测目录、结果、清理结果必须入日志 |
 | `cipher` 可能因权限、卷不支持 EFS、组策略禁用而失败 | 失败必须给出具体错误与所在卷，不得静默继续 |
 | 部分卷（如某些可移动/网络盘）不支持 EFS | 预检阶段探测并明确拒绝，而不是在复制中途炸 |
 
@@ -609,18 +780,30 @@ Finalized    处理 native host → 删除 journal → 事件完成
 
 ```text
 1 预检：记录 stagingParent 的 Encrypted 属性（preEncrypted）
-        探测卷是否支持 EFS（尝试在临时子目录加密再解密，失败则不修改任何东西）
+        探测卷是否支持 EFS
 2 若 preEncrypted = false 且 需要写入 Application Protected 源：
        cipher /e <stagingParent>   → 记 journal(efs.enabledByThisRun = true)
 3 复制（robocopy /E /COPY:DAT /DCOPY:DAT /R:0 /W:0）
 4 cipher /d /s:<stage> + 复查无 Encrypted 项（现有断言）
-5 收尾：若 enabledByThisRun → cipher /d <stagingParent>，恢复 preEncrypted
+5 收尾：若 enabledByThisRun → cipher /d <stagingParent>，恢复 preEncrypted，
+         记 journal(efs.restoredUtc)
 6 若恢复失败 → 不静默：日志 ERROR + 结果条提示"目录加密状态未恢复"，给出原状态与当前状态
 ```
 
+**探测目录的副作用契约（v0.3 新增）**：
+
+```text
+位置：stagingParent 同卷的临时目录 %TEMP%\CodexPluginSync-efs-probe-<guid>（卷不同则改用该卷根下的临时目录）
+流程：建目录 → cipher /e → 读属性 → cipher /d → 删目录
+失败：任一步失败 → 必须尝试删除；删除也失败 → needs-attention + 日志记录完整路径
+日志：phase=efs-probe location=<path> result=ok|unsupported|leftover
+```
+
+绝对禁止把探测目录建在 `CodexHome` 内（会破坏 `--check` 与备份目录的干净性）。
+
 ### 8.3 必须验证的不确定性
 
-- **Codex 是否依赖 `marketParent` 保持加密**：现有实现留下了加密状态，如果 Codex 后续写入要求加密继承，那么"恢复原状态"可能引入新问题。默认按契约恢复，但列为 M5 真机验收项（D-01）。
+- **Codex 是否依赖 `marketParent` 保持加密**：现有实现留下了加密态，如果 Codex 后续写入要求加密继承，那么"撤销本次开启"后可能引入新问题。当前契约只撤销本次自己造成的变更，不碰用户既有状态；D-01 的结果决定是否要**主动永久**开启。列为 M5 真机验收项。
 - 若验证结论是"必须保持加密"，则契约改为"首次同步时永久开启并记录，之后视为既定状态"，并在 UI 显示该目录的加密状态。
 - fixture 只能覆盖普通 NTFS 行为；**EFS 相关路径不接受 fixture 结果作为验收依据**。
 
@@ -658,10 +841,46 @@ interface INativeHostProvider {
 | manifest 文件不存在 | 路径检验 | `stale`：可修复（写新 manifest 并指向当前 exe） |
 | manifest JSON 损坏 | 反序列化失败 | `corrupt`：备份原文件为 `*.corrupt-<stamp>` 后重写 |
 | 指向旧版本 exe | 与期望路径比对 | `stale`：备份后更新（现有行为） |
+| 指向 `cache\<plugin>\latest`（junction 别名） | **解析 reparse point 后**与期望路径比对 | `ok`：不改写 |
+
+**路径比对规则（v0.3 新增，真机教训）**：真机上 `plugins\cache\openai-bundled\chrome\latest` 是指向当前版本目录的 **junction**，而 Chrome 的 manifest 就指向 `...\chrome\latest\extension-host\...\extension-host.exe`。如果按字符串比较，会把正确注册误判为 `outdated`，进而改正一个本来没错的文件。因此：
+
+```text
+1 两边都先用 GetFinalPathNameByHandle 解析为最终路径（junction / symlink 全部展开）
+2 解析后按 OrdinalIgnoreCase 比较
+3 期望 exe 不存在 → unknown；注册值指向的文件不存在 → stale；其余按比较结果 ok / outdated
+```
 | 多个浏览器同时存在 | 两个 provider 均 `registered` | 分别处理，互不影响；日志分别记录 |
 | 无写权限 | 写注册表/文件失败 | 报错并保持原状；建议以当前用户运行（不自动提权） |
 
 回滚时同时还原 **manifest 文件内容**与**注册表默认值**（按 `backup.json.nativeHost[].previous*` 记录），不是只改路径。
+
+### 9.4 回滚语义：恢复原值还是删除对象（v0.3 新增）
+
+仅在 `backup.json` 里存一个 `registryValueExisted` 不够："键不存在"、"键在但默认值不存在"、"默认值是空串" 是三种不同状态，回滚动作完全不同。因此写入前必须记录：
+
+| 字段 | 含义 |
+| --- | --- |
+| `registryKeyExisted` | 整个 `NativeMessagingHosts\<id>` 键操作前是否存在 |
+| `registryValueExisted` | 键下的默认值（name = 空串）操作前是否存在 |
+| `previousManifestPath` | 默认值原来的字符串（即使指向不存在的文件也原样记录） |
+| `manifestExisted` | 该路径上的文件操作前是否存在 |
+| `manifestWasValid` | 能否按 JSON 解析且 `name == com.openai.codexextension` |
+| `manifestBackup` | 原文件字节副本（损坏也存，文件名 `native-chrome.json.previous`） |
+
+回滚动作矩阵：
+
+| 记录 | 动作 |
+| --- | --- |
+| `registryKeyExisted=false` 且本次是我们创建的 | 删整个键（`Remove-Item`） |
+| `registryValueExisted=false` 且键已由其他程序创建 | 只删默认值（`RegDeleteValue(key, "")`），不删键 |
+| `registryValueExisted=true` | 恢复原字符串；**原值为空串时写回空串**，不得当成"不存在"删除 |
+| `manifestExisted=false` | 删除本次写入的 manifest 文件 |
+| `manifestExisted=true` 且 `manifestWasValid=true` | 写回 `manifestBackup` 字节 |
+| `manifestExisted=true` 且 `manifestWasValid=false` | 写回字节并标记 `needs-attention`：原文件本就损坏，恢复后仍然是损坏态，需人工确认 |
+| 已无任何写权限 | 不改动，报错并保留快照，建议以当前用户运行（不自动提权） |
+
+验证：回滚后必须重读注册表与 manifest，逐字段比对 `backup.json` 记录；不一致 → `needs-attention`。
 
 ---
 
@@ -842,6 +1061,10 @@ CI 只解析 `schemaVersion` + `state.verdict` + `exitCode`，不依赖任何显
 | 恢复失败 | 还原时异常 | 保留 journal 与快照，标记 `needs-attention`，导出诊断 |
 | 无读取 AppX 权限 | `UnauthorizedAccessException` | 说明需要读取权限，给排查步骤，不自动提权 |
 | 备份快照不完整 | `status=partial` | 拒绝恢复并说明缺项 |
+| 备份移入后校验失败 | 重算 `filesSha256` 不匹配 | `status=verify-failed`，不进入 `Committed`，退出码 1 |
+| EFS 探测目录删除失败 | 删除后 `Test-Path` 仍为 true | `needs-attention` + 日志记录完整路径 |
+| journal 与磁盘状态冲突（矩阵第 11 行） | 摘要既非旧也非新 | 不自动处理，`needs-attention`，保留 journal 与快照 |
+| 回滚中途被杀 | 启动发现 `operationKind=rollback` 的 journal | 按 §7.2 派发到 §6.6 矩阵，先补完 native host 再清 journal |
 
 ---
 
@@ -855,6 +1078,8 @@ CI 只解析 `schemaVersion` + `state.verdict` + `exitCode`，不依赖任何显
 ```
 
 产出 `build\bin\Release\CodexPluginSync.exe`。构建脚本附带断言：输出目录只有 1 个 exe、exe 内无第三方程序集引用、`--version` 可运行。
+
+> 实测注意（无 targeting pack 的机器）：若本机未安装 .NET Framework 4.8 **targeting pack**，内置 MSBuild 会回退到运行时目录的 4.0 程序集，抛出 `MSB3644` 警告并把 `mscorlib.dll`、`*.nlp` 复制进输出目录。csproj 已把 `mscorlib` 显式声明为 `Private=false`，并由 `AssertSingleFileOutput` 目标在构建末尾硬断言（多出文件即构建失败）。CI 上应安装 4.8 targeting pack，以消除回退。
 
 CI（`.github/workflows/build.yml`）：`windows-latest` → msbuild Release → `--selftest --fixture tests/fixture` → 上传 artifact → tag 触发 Release 附 exe + SHA-256。
 
@@ -875,7 +1100,11 @@ CI（`.github/workflows/build.yml`）：`windows-latest` → msbuild Release →
 | 只改一个缓存 | 备份只记录该缓存；`--rollback` 只动该缓存 |
 | 校验失败 | live 未变、stage 保留、`Aborted`、退出码 1 |
 | 备份中途失败 | `status=partial`，不可恢复，UI 拒绝 |
-| 每阶段中断（`planned`…`committed` 逐个） | 恢复分支与 §7.2 表一致，live 处于完整旧版本或完整新版本 |
+| 每阶段中断（`planned`…`committed` 逐个） | 按 §6.6 矩阵判定，live 处于完整旧版本或完整新版本 |
+| §6.6 矩阵每行 | 至少一个构造好的 fixture（人为摆放 L/B/S 三元组）落到该行，动作与终态符合表 |
+| 回滚 journal 中断（每个 rollback 阶段） | 重启后能区分"live 已移走未回"与"部分组件已回滚"，并按 §6.6 收敛 |
+| `--check` 副作用 | `CodexHome` 指纹前后一致；不建 `logs`；不执行 EFS 探测 |
+| 备份完成判据 | 人为让 `filesSha256` 不匹配 → `verify-failed`，拒绝回滚，不进入 `Committed` |
 | journal 损坏 | 不自动删除，提示人工选择 |
 | 路径越界 | 清理/回滚拒绝 `CodexHome` 之外路径，不递归 junction |
 | 磁盘不足 | 预检失败，零副作用 |
@@ -892,6 +1121,7 @@ CI（`.github/workflows/build.yml`）：`windows-latest` → msbuild Release →
 5. Chrome 打开时同步：CLI 失败退出；GUI 优雅关闭后成功。
 6. Edge 存在时：行为符合 §9.2（当前默认不写）。
 7. 注册表项不存在 / manifest 损坏 / 指向旧版本：分别验证修复与拒绝。
+7b. manifest 指向 `...\chrome\latest\...`（junction 别名）：必须报告 `ok` 且**不改写**（回归用例，已在 fixture 覆盖）。
 8. 磁盘空间不足：零副作用。
 9. 在 `staged`、`commit-started` 两个阶段强杀进程：重启后恢复分支正确。
 10. `--rollback --backup <id>` 恢复到指定备份，native host 一并还原。
@@ -904,8 +1134,8 @@ CI（`.github/workflows/build.yml`）：`windows-latest` → msbuild Release →
 
 | 阶段 | 内容 | 完成判据 |
 | --- | --- | --- |
-| **M0** | 冻结契约：状态机、备份模型、退出码、JSON schema、恢复策略、EFS/NativeHost/脱敏边界（本文档 v0.2） | 评审通过，本文档定稿 |
-| **M1** | 无界面 Core + selftest：Paths / Check / Sync / Rollback / Cleanup / Journal / BackupStore / Hasher / Redactor | `--selftest` 在 fixture 上全绿（§16.1） |
+| **M0** | 冻结契约：状态机、备份模型、退出码、JSON schema、恢复矩阵、EFS/NativeHost/脱敏边界（本文档 v0.3） | 评审通过，本文档定稿 |
+| **M1** | 无界面 Core + selftest：Paths / Check / Sync / Rollback / Cleanup / Journal / BackupStore / Hasher / Redactor | `--selftest` 在 fixture 上全绿（§16.1），**且 §6.6 矩阵 11 行每行至少一个 fixture 用例** |
 | **M2** | CLI 兼容层：参数、退出码、`--json`、`.cmd` 改为调用 exe 并做 2→0 映射 | 旧计划任务/批处理不中断（§2.4） |
 | **M3** | WinForms 主界面：同步、备份、日志、恢复状态；只消费 `StateSnapshot` 与事件 | 可完成完整同步/回滚流程 |
 | **M4** | 托盘与定时检查（默认关闭、启动延迟、6 小时） | 常驻不干扰 Core |
@@ -935,7 +1165,7 @@ CI（`.github/workflows/build.yml`）：`windows-latest` → msbuild Release →
 
 | ID | 问题 | 影响 |
 | --- | --- | --- |
-| D-01 | `marketParent` 是否应保持 EFS 加密（现有实现留了加密态） | §8.2 第 5 步是否改为"保持" |
+| D-01 | `marketParent` 是否应**长期**保持 EFS 加密（现有实现留了加密态） | §8.2 第 5 步的"撤销本次开启"已定；D-01 只影响"是否应主动永久开启" |
 | D-02 | Edge 是否加载同一扩展、用哪个注册表键 | §9.2 是否默认开启 |
 | D-03 | Codex Desktop 主进程名 | §10.1 默认列表 |
 | D-04 | `extension-host` 是否常驻（决定是否总是阻断同步） | §10 行为 |
