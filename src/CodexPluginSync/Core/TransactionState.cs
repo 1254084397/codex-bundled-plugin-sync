@@ -221,7 +221,12 @@ namespace CodexPluginSync.Core
 
         /// <summary>
         /// 返回 null 表示通过；否则返回可直接写日志/给用户看的原因。
-        /// 「components 为空时不允许写 status=complete」是 §6.3 的硬约束。
+        /// §6.3 硬约束：
+        ///   1. components 为空时不允许 status=complete；
+        ///   2. status=complete 时每个组件只允许终态 moved / created，且必须有 digest；
+        ///   3. moved 必须有 backupPath + previousDigest，且 existedBefore 必须为 true；
+        ///   4. created 必须 existedBefore=false。
+        /// 未完的 manifest（partial / verify-failed）只做最小检查，允许 state=planned。
         /// </summary>
         public static string Validate(BackupManifestDto manifest)
         {
@@ -233,35 +238,65 @@ namespace CodexPluginSync.Core
             {
                 return "backup.json 缺少 status";
             }
-            if (manifest.Status == BackupStates.Complete && (manifest.Components == null || manifest.Components.Count == 0))
+
+            bool complete = manifest.Status == BackupStates.Complete;
+            if (complete && (manifest.Components == null || manifest.Components.Count == 0))
             {
                 return "components 为空时不允许标记 status=complete";
             }
-
-            if (manifest.Components != null)
+            if (manifest.Components == null)
             {
-                for (int i = 0; i < manifest.Components.Count; i++)
+                return null;
+            }
+
+            for (int i = 0; i < manifest.Components.Count; i++)
+            {
+                BackupComponentDto component = manifest.Components[i];
+                string label = (component == null || string.IsNullOrEmpty(component.Name))
+                    ? "第 " + (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + " 个组件"
+                    : component.Name;
+                if (component == null || string.IsNullOrEmpty(component.Name))
                 {
-                    BackupComponentDto component = manifest.Components[i];
-                    if (component == null || string.IsNullOrEmpty(component.Name))
+                    return label + "缺少 name";
+                }
+
+                if (!complete)
+                {
+                    // 未完成的快照：只要求 moved 已声明备份落点，不要求 digest（尚未校验）。
+                    if (component.State == BackupStates.Moved && string.IsNullOrEmpty(component.BackupPath))
                     {
-                        return "backup.json 第 " + (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + " 个组件缺少 name";
+                        return label + "：state=moved 但缺少 backupPath";
                     }
-                    if (component.State == BackupStates.Moved)
+                    continue;
+                }
+
+                if (component.State != BackupStates.Moved && component.State != BackupStates.Created)
+                {
+                    return label + "：status=complete 下不允许 state=" + (component.State == null ? "(空)" : component.State);
+                }
+                if (component.Digest == null || string.IsNullOrEmpty(component.Digest.TreeHash))
+                {
+                    return label + "：缺少 digest（无法验证新内容）";
+                }
+
+                if (component.State == BackupStates.Moved)
+                {
+                    if (string.IsNullOrEmpty(component.BackupPath))
                     {
-                        if (string.IsNullOrEmpty(component.BackupPath))
-                        {
-                            return component.Name + "：state=moved 但缺少 backupPath";
-                        }
-                        if (component.PreviousDigest == null || string.IsNullOrEmpty(component.PreviousDigest.TreeHash))
-                        {
-                            return component.Name + "：state=moved 但缺少 previousDigest（回滚将无法校验备份内容）";
-                        }
+                        return label + "：state=moved 但缺少 backupPath";
                     }
-                    if (component.State == BackupStates.Created && component.Digest == null)
+                    if (component.PreviousDigest == null || string.IsNullOrEmpty(component.PreviousDigest.TreeHash))
                     {
-                        return component.Name + "：state=created 但缺少 digest";
+                        return label + "：state=moved 但缺少 previousDigest（回滚将无法校验备份内容）";
                     }
+                    if (!component.ExistedBefore)
+                    {
+                        return label + "：state=moved 与 existedBefore=false 矛盾";
+                    }
+                }
+                else if (component.ExistedBefore)
+                {
+                    return label + "：state=created 与 existedBefore=true 矛盾";
                 }
             }
             return null;

@@ -41,6 +41,7 @@ namespace CodexPluginSync.Core
         public const string Committed = "committed";
         public const string Finalized = "finalized";
         public const string Recovered = "recovered";
+        public const string NeedsAttention = "needs-attention";
     }
 
     /// <summary>
@@ -53,7 +54,23 @@ namespace CodexPluginSync.Core
         public const string StatusAborted = "aborted";
         public const string StatusCommitted = "committed";
         public const string StatusRecovered = "recovered";
+        public const string StatusNeedsAttention = "needs-attention";
         public const string StatusVerifyFailed = "verify-failed";
+
+        /// <summary>
+        /// 失败注入点（仅 selftest 使用）。传入 "after-swap:<component>"，
+        /// 生产路径保持为 null 即完全无副作用。
+        /// </summary>
+        public static Action<string> FailureInjectionHook;
+
+        private static void MaybeFail(string point)
+        {
+            Action<string> hook = FailureInjectionHook;
+            if (hook != null)
+            {
+                hook(point);
+            }
+        }
 
         /// <summary>
         /// 执行一次事务。backupDirectory 由调用方给出（已确保不存在或为空）；
@@ -171,6 +188,7 @@ namespace CodexPluginSync.Core
                     JournalStore.Write(paths, journal);
                     result.Add(target.Component + "：stage → live");
                     manifest.Components[i].State = target.ExistedBefore ? BackupStates.Moved : BackupStates.Created;
+                    MaybeFail("after-swap:" + target.Component);
                 }
 
                 // Committed：复核 live 摘要 -----------------------------
@@ -181,10 +199,11 @@ namespace CodexPluginSync.Core
                     {
                         result.Message = targets[i].Component + "：交换后 live 摘要与 stage 不一致";
                         journal.Phase = JournalPhases.Committed;
-                        Revert(paths, journal, targets, result);
+                        bool verifiedRevertOk = Revert(paths, journal, targets, result);
+                        journal.Phase = JournalPhases.NeedsAttention;
                         manifest.Status = BackupStates.VerifyFailed;
                         BackupManifestStore.Write(backupDirectory, manifest);
-                        result.Status = StatusVerifyFailed;
+                        result.Status = verifiedRevertOk ? StatusVerifyFailed : StatusNeedsAttention;
                         return result;
                     }
                 }
@@ -212,11 +231,22 @@ namespace CodexPluginSync.Core
                 result.Message = ex.Message;
                 if (commitStarted)
                 {
-                    Revert(paths, journal, targets, result);
+                    bool revertOk = Revert(paths, journal, targets, result);
                     manifest.Status = BackupStates.VerifyFailed;
                     try { BackupManifestStore.Write(backupDirectory, manifest); }
                     catch (Exception) { }
-                    result.Status = StatusRecovered;
+                    if (revertOk)
+                    {
+                        result.Status = StatusRecovered;
+                    }
+                    else
+                    {
+                        journal.Phase = JournalPhases.NeedsAttention;
+                        try { JournalStore.Write(paths, journal); }
+                        catch (Exception) { }
+                        result.Add("退回不完整：journal 与备份已保留，需人工处理");
+                        result.Status = StatusNeedsAttention;
+                    }
                 }
                 else
                 {
@@ -240,9 +270,14 @@ namespace CodexPluginSync.Core
             return result;
         }
 
-        /// <summary>把已交换的组件退回交换前内容（逆序），逐组件校验摘要。</summary>
-        private static void Revert(CodexPaths paths, JournalDto journal, IList<SyncTarget> targets, SyncTransactionResult result)
+        /// <summary>
+        /// 把已交换的组件退回交换前内容（逆序）。
+        /// 返回 true 仅当每个组件都退回且摘要与 oldDigest 一致；
+        /// 任一组件失败/无法确认 → 返回 false，journal 必须保留（不能删）。
+        /// </summary>
+        private static bool Revert(CodexPaths paths, JournalDto journal, IList<SyncTarget> targets, SyncTransactionResult result)
         {
+            bool allReverted = true;
             for (int i = targets.Count - 1; i >= 0; i--)
             {
                 SyncTarget target = targets[i];
@@ -252,32 +287,55 @@ namespace CodexPluginSync.Core
                     {
                         Directory.Delete(target.LivePath, true);
                     }
-                    if (target.ExistedBefore && Directory.Exists(target.BackupPath) && !Directory.Exists(target.LivePath))
+                    if (target.ExistedBefore)
                     {
-                        Directory.Move(target.BackupPath, target.LivePath);
-                        ComponentDigestDto restored = TreeDigest.Compute(target.LivePath);
-                        if (!TreeDigest.Equal(restored, target.OldDigest))
+                        if (Directory.Exists(target.LivePath))
                         {
-                            result.Add(target.Component + "：退回后摘要与 oldDigest 不一致");
+                            allReverted = false;
+                            result.Add(target.Component + "：live 仍存在，未覆盖（需人工处理）");
+                        }
+                        else if (!Directory.Exists(target.BackupPath))
+                        {
+                            allReverted = false;
+                            result.Add(target.Component + "：备份缺失，无法退回（需人工处理）");
                         }
                         else
                         {
-                            result.Add(target.Component + "：已退回同步前内容");
+                            Directory.Move(target.BackupPath, target.LivePath);
+                            ComponentDigestDto restored = TreeDigest.Compute(target.LivePath);
+                            if (!TreeDigest.Equal(restored, target.OldDigest))
+                            {
+                                allReverted = false;
+                                result.Add(target.Component + "：退回后摘要与 oldDigest 不一致");
+                            }
+                            else
+                            {
+                                result.Add(target.Component + "：已退回同步前内容");
+                            }
                         }
                     }
-                    journal.Targets[i].SwappedOut = false;
-                    journal.Targets[i].SwappedIn = false;
+                    if (allReverted)
+                    {
+                        journal.Targets[i].SwappedOut = false;
+                        journal.Targets[i].SwappedIn = false;
+                    }
                 }
                 catch (Exception ex)
                 {
+                    allReverted = false;
                     result.Add(target.Component + "：退回失败 —— " + ex.Message);
                 }
             }
-            journal.Phase = JournalPhases.Recovered;
+
+            journal.Phase = allReverted ? JournalPhases.Recovered : JournalPhases.NeedsAttention;
             try { JournalStore.Write(paths, journal); }
             catch (Exception) { }
-            try { JournalStore.Delete(paths); }
-            catch (Exception) { }
+            if (allReverted)
+            {
+                try { JournalStore.Delete(paths); }
+                catch (Exception) { }
+            }
+            return allReverted;
         }
     }
 }

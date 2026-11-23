@@ -441,6 +441,7 @@ namespace CodexPluginSync.Tests
                 BackupComponentDto movedNoDigest = new BackupComponentDto();
                 movedNoDigest.Name = "cache:browser";
                 movedNoDigest.State = BackupStates.Moved;
+                movedNoDigest.ExistedBefore = true;
                 movedNoDigest.BackupPath = Path.Combine(backupDirectory, "cache-browser.previous");
                 missingDigest.Components = new List<BackupComponentDto>();
                 missingDigest.Components.Add(movedNoDigest);
@@ -457,6 +458,55 @@ namespace CodexPluginSync.Tests
                 movedNoDigest.Digest.TreeHash = "d4e5f6";
                 context.Expect(BackupManifestStore.Validate(missingDigest) == null,
                     "完整快照应通过校验", BackupManifestStore.Validate(missingDigest));
+
+                // --- complete 的更严格拒绝分支（审阅要求）----------------
+                BackupManifestDto plannedComplete = new BackupManifestDto();
+                plannedComplete.Status = BackupStates.Complete;
+                BackupComponentDto plannedComponent = new BackupComponentDto();
+                plannedComponent.Name = "cache:browser";
+                plannedComponent.State = BackupStates.Planned;
+                plannedComplete.Components = new List<BackupComponentDto>();
+                plannedComplete.Components.Add(plannedComponent);
+                context.Expect(BackupManifestStore.Validate(plannedComplete) != null,
+                    "complete 下 state=planned 必须被拒绝", "validate=null");
+
+                plannedComponent.State = "weird-state";
+                context.Expect(BackupManifestStore.Validate(plannedComplete) != null,
+                    "complete 下未知 state 必须被拒绝", "validate=null");
+
+                BackupManifestDto noNewDigest = new BackupManifestDto();
+                noNewDigest.Status = BackupStates.Complete;
+                BackupComponentDto movedWithoutNew = new BackupComponentDto();
+                movedWithoutNew.Name = "cache:chrome";
+                movedWithoutNew.State = BackupStates.Moved;
+                movedWithoutNew.ExistedBefore = true;
+                movedWithoutNew.BackupPath = Path.Combine(backupDirectory, "cache-chrome.previous");
+                movedWithoutNew.PreviousDigest = movedNoDigest.PreviousDigest;
+                noNewDigest.Components = new List<BackupComponentDto>();
+                noNewDigest.Components.Add(movedWithoutNew);
+                context.Expect(BackupManifestStore.Validate(noNewDigest) != null,
+                    "complete 下缺 digest 必须被拒绝", "validate=null");
+
+                movedWithoutNew.Digest = movedNoDigest.Digest;
+                context.Expect(BackupManifestStore.Validate(noNewDigest) == null,
+                    "补齐 digest 后应通过", BackupManifestStore.Validate(noNewDigest));
+
+                movedWithoutNew.ExistedBefore = false;
+                context.Expect(BackupManifestStore.Validate(noNewDigest) != null,
+                    "state=moved 与 existedBefore=false 矛盾必须被拒绝", "validate=null");
+                movedWithoutNew.ExistedBefore = true;
+
+                BackupComponentDto createdButExisted = new BackupComponentDto();
+                createdButExisted.Name = "cache:computer-use";
+                createdButExisted.State = BackupStates.Created;
+                createdButExisted.ExistedBefore = true;
+                createdButExisted.Digest = movedNoDigest.Digest;
+                noNewDigest.Components.Add(createdButExisted);
+                context.Expect(BackupManifestStore.Validate(noNewDigest) != null,
+                    "state=created 与 existedBefore=true 矛盾必须被拒绝", "validate=null");
+                createdButExisted.ExistedBefore = false;
+                context.Expect(BackupManifestStore.Validate(noNewDigest) == null,
+                    "created + existedBefore=false 应通过", BackupManifestStore.Validate(noNewDigest));
 
                 BackupComponentDto created = new BackupComponentDto();
                 created.Name = "cache:chrome";
@@ -562,6 +612,57 @@ namespace CodexPluginSync.Tests
                 context.Expect(File.Exists(Path.Combine(live2, "keep.txt")), "中止时 live 未被移动", live2);
                 context.Expect(!Directory.Exists(Path.Combine(backup2, "cache-chrome.previous")), "中止时未产生备份副本", backup2);
                 context.Expect(!File.Exists(paths.JournalPath), "中止后 journal 已清理", paths.JournalPath);
+
+                // 第三段：交换后注入失败 → 退回失败 → needs-attention 且保留 journal
+                string live3 = Path.Combine(root, "plugins", "cache", "openai-bundled", "computer-use");
+                Directory.CreateDirectory(live3);
+                File.WriteAllText(Path.Combine(live3, "keep.txt"), "keep");
+                string stage3 = live3 + ".stage3";
+                Directory.CreateDirectory(stage3);
+                File.WriteAllText(Path.Combine(stage3, "new.txt"), "new");
+                string backup3 = Path.Combine(paths.BackupsRoot, "openai-bundled-sync-test3");
+                string backupItem3 = Path.Combine(backup3, "cache-computer-use.previous");
+
+                List<SyncTarget> bad3Targets = new List<SyncTarget>();
+                SyncTarget target3 = new SyncTarget();
+                target3.Component = "cache:computer-use";
+                target3.LivePath = live3;
+                target3.StagePath = stage3;
+                target3.BackupPath = backupItem3;
+                target3.ExistedBefore = true;
+                bad3Targets.Add(target3);
+
+                SyncTransactionResult attention = null;
+                SyncTransaction.FailureInjectionHook = delegate(string point)
+                {
+                    if (point == "after-swap:cache:computer-use")
+                    {
+                        if (Directory.Exists(backupItem3)) { Directory.Delete(backupItem3, true); }
+                        throw new InvalidOperationException("injected after-swap failure");
+                    }
+                };
+                try
+                {
+                    attention = SyncTransaction.Execute(paths, backup3, "txn-attention", bad3Targets);
+                }
+                finally
+                {
+                    SyncTransaction.FailureInjectionHook = null;
+                }
+
+                context.Expect(attention != null && attention.Status == SyncTransaction.StatusNeedsAttention,
+                    "退回失败 → needs-attention",
+                    attention == null ? "null" : attention.Status + "/" + attention.Message);
+                context.Expect(File.Exists(paths.JournalPath), "退回失败时必须保留 journal", paths.JournalPath);
+                bool hasBackupMissing = false;
+                if (attention != null)
+                {
+                    for (int i = 0; i < attention.Actions.Count; i++)
+                    {
+                        if (attention.Actions[i].IndexOf("备份缺失") >= 0) { hasBackupMissing = true; }
+                    }
+                }
+                context.Expect(hasBackupMissing, "退回失败的原因应写明备份缺失", hasBackupMissing.ToString());
             }
             catch (Exception ex)
             {
