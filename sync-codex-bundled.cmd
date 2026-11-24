@@ -7,13 +7,22 @@ set "SCRIPT_NAME=%~nx0"
 set "DO_PAUSE=0"
 if "%~1"=="" set "DO_PAUSE=1"
 
-for %%A in (%*) do (
-  if /i "%%~A"=="--no-pause" set "DO_PAUSE=0"
-  if /i "%%~A"=="-no-pause" set "DO_PAUSE=0"
-  if /i "%%~A"=="--pause" set "DO_PAUSE=1"
-  if /i "%%~A"=="-pause" set "DO_PAUSE=1"
+rem 支持作为首参数传入 --no-pause / --pause
+if /i "%~1"=="--no-pause" (
+  set "DO_PAUSE=0"
+  shift /1
+) else if /i "%~1"=="-no-pause" (
+  set "DO_PAUSE=0"
+  shift /1
+) else if /i "%~1"=="--pause" (
+  set "DO_PAUSE=1"
+  shift /1
+) else if /i "%~1"=="-pause" (
+  set "DO_PAUSE=1"
+  shift /1
 )
 
+rem 支持环境变量控制暂停
 if /i "%CODEX_NO_PAUSE%"=="1" set "DO_PAUSE=0"
 if /i "%CODEX_NO_PAUSE%"=="true" set "DO_PAUSE=0"
 if /i "%CI%"=="1" set "DO_PAUSE=0"
@@ -49,26 +58,15 @@ if not "%~1"=="" if /i not "%~1"=="--sync" goto :MODE_HELP
 goto :MODE_SYNC
 
 :DISPATCH_EXE
-set "HAS_COMMAND=0"
+if /i "%~1"=="--help" goto :EXE_HELP
+if /i "%~1"=="/h" goto :EXE_HELP
+if /i "%~1"=="-h" goto :EXE_HELP
+if /i "%~1"=="/?" goto :EXE_HELP
+
 set "IS_CHECK=0"
-set "IS_HELP=0"
-for %%A in (%*) do (
-  if /i "%%~A"=="--check" set "HAS_COMMAND=1" & set "IS_CHECK=1"
-  if /i "%%~A"=="--sync" set "HAS_COMMAND=1"
-  if /i "%%~A"=="--rollback" set "HAS_COMMAND=1"
-  if /i "%%~A"=="--cleanup-only" set "HAS_COMMAND=1"
-  if /i "%%~A"=="--selftest" set "HAS_COMMAND=1"
-  if /i "%%~A"=="--export-diag" set "HAS_COMMAND=1"
-  if /i "%%~A"=="--version" set "HAS_COMMAND=1"
-  if /i "%%~A"=="-v" set "HAS_COMMAND=1"
-  if /i "%%~A"=="--help" set "HAS_COMMAND=1" & set "IS_HELP=1"
-  if /i "%%~A"=="-h" set "HAS_COMMAND=1" & set "IS_HELP=1"
-  if /i "%%~A"=="/?" set "HAS_COMMAND=1" & set "IS_HELP=1"
-)
+if /i "%~1"=="--check" set "IS_CHECK=1"
 
-if "%IS_HELP%"=="1" goto :EXE_HELP
-
-if "%HAS_COMMAND%"=="0" (
+if "%~1"=="" (
   "%EXE_PATH%" --sync %*
 ) else (
   "%EXE_PATH%" %*

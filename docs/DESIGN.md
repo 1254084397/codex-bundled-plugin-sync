@@ -202,15 +202,15 @@ var engine = new SyncEngine(new SyncOptions {
 
 | 项 | 事实 |
 | --- | --- |
-| 用户拿到的东西 | 1 个 `CodexPluginSync.exe` |
+| 用户拿到的东西 | 双独立入口发布包：`CodexPluginSync.exe`（GUI）与 `CodexPluginSync.Cli.exe`（CLI） |
 | 随程序分发的依赖 | 0 个（无 DLL、无 MSIX、无安装器、无配置文件） |
 | 目标机必须已有 | .NET Framework 4.8（Win10 1903+ / Win11 预装；低于此版本不支持） |
 | 视为环境依赖、不随程序分发 | `robocopy.exe`、`cipher.exe`（Windows 自带） |
 | JSON 处理 | `DataContractJsonSerializer`（`System.Runtime.Serialization`，BCL）；不引入 JSON 库 |
 | 资源 | 图标、字符串、默认设置以嵌入资源编译进程序集；不读外部文件 |
-| 构建断言 | 发布目录必须只有 1 个 exe，否则构建失败 |
+| 构建断言 | 各项目发布目录不产生多余私有或第三方 DLL，否则构建失败 |
 
-README 统一用"单 exe 分发 / single-exe distribution"，删除"self-contained / 零依赖"这类不准确措辞。
+发布文档统一用“双独立入口分发 (GUI + CLI，零外部 DLL 依赖)”，删除“self-contained / 零依赖”这类不准确措辞。
 
 ### 4.4 运行环境基线
 

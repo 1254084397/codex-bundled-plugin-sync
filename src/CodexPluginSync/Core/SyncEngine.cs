@@ -127,8 +127,8 @@ namespace CodexPluginSync.Core
                         marketplace.BackupPath = Path.Combine(backupDirectory, "marketplace.previous");
                         marketplace.ExistedBefore = Directory.Exists(paths.MarketBundle);
                         Directory.CreateDirectory(paths.MarketParent);
-                        Installer.CopyTreePreservingLinks(sourceBundle, marketplace.StagePath, isCancelled);
                         targets.Add(marketplace);
+                        Installer.CopyTreePreservingLinks(sourceBundle, marketplace.StagePath, isCancelled);
                         result.Lines.Add("staged marketplace（" + CountFiles(marketplace.StagePath) + " 个文件）");
                     }
 
@@ -175,8 +175,8 @@ namespace CodexPluginSync.Core
 
                         string versionStage = Path.Combine(target.StagePath, version);
                         Directory.CreateDirectory(target.StagePath);
-                        Installer.CopyTreePreservingLinks(sourcePlugin, versionStage, isCancelled);
                         targets.Add(target);
+                        Installer.CopyTreePreservingLinks(sourcePlugin, versionStage, isCancelled);
                         result.Lines.Add("staged " + plugin + "@" + version + "（" + CountFiles(versionStage) + " 个文件）");
                     }
                 }
@@ -190,6 +190,18 @@ namespace CodexPluginSync.Core
                     result.Message = "用户已取消同步。";
                     result.ExitCode = ExitCodesLocator.Ok;
                     output.WriteLine(result.Message);
+                    return result;
+                }
+                catch (Exception ex)
+                {
+                    for (int j = 0; j < targets.Count; j++)
+                    {
+                        try { if (Directory.Exists(targets[j].StagePath)) Directory.Delete(targets[j].StagePath, true); } catch (Exception) { }
+                    }
+                    result.Status = "error";
+                    result.Message = "准备暂存区失败：" + ex.Message;
+                    result.ExitCode = ExitCodesLocator.Error;
+                    error.WriteLine(result.Message);
                     return result;
                 }
 

@@ -2005,6 +2005,20 @@ namespace CodexPluginSync.Tests
             string missingValueError;
             bool rejectedValue = !CliOptions.TryParse(new string[] { "--backup" }, out missingValue, out missingValueError);
             context.Expect(rejectedValue, "missing option value is rejected", "accepted");
+
+            // 验证 CLI 输出编码严格无 BOM（首字节不可为 EF BB BF）
+            byte[] preamble = ConsoleManager.Utf8NoBom.GetPreamble();
+            context.Expect(preamble == null || preamble.Length == 0, "ConsoleManager.Utf8NoBom emits no BOM", preamble == null ? "0" : preamble.Length.ToString());
+            using (MemoryStream ms = new MemoryStream())
+            {
+                using (StreamWriter sw = new StreamWriter(ms, ConsoleManager.Utf8NoBom))
+                {
+                    sw.WriteLine("1.0.0");
+                }
+                byte[] bytes = ms.ToArray();
+                bool hasBom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
+                context.Expect(!hasBom, "CLI output first bytes are not UTF-8 BOM EF BB BF", hasBom ? "BOM found" : "clean");
+            }
         }
 
         // -------------------------------------------------------------- helpers

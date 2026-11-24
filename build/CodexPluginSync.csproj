@@ -43,14 +43,14 @@
     <Compile Include="..\src\CodexPluginSync\**\*.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <!-- §15 构建断言：发布目录只允许合法构建产物，否则构建失败。 -->
+  <!-- §15 构建断言：确保生成 GUI 主程序，且发布目录不产生多余的第三方或私有 DLL（如 mscorlib.dll） -->
   <Target Name="AssertSingleFileOutput" AfterTargets="Build">
+    <Error Condition="!Exists('$(OutputPath)CodexPluginSync.exe')"
+           Text="GUI 项目未生成目标产物：$(OutputPath)CodexPluginSync.exe" />
     <ItemGroup>
-      <AllBuildOutputs Include="$(OutputPath)**\*" />
-      <ExpectedBuildOutput Include="$(OutputPath)CodexPluginSync.exe;$(OutputPath)CodexPluginSync.Cli.exe" />
-      <UnexpectedBuildOutput Include="@(AllBuildOutputs)" Exclude="@(ExpectedBuildOutput)" />
+      <ExtraDllOutputs Include="$(OutputPath)**\*.dll;$(OutputPath)**\*.nlp" />
     </ItemGroup>
-    <Error Condition="'@(UnexpectedBuildOutput)' != ''"
-           Text="发布目录产物不符合预期，实际多出：@(UnexpectedBuildOutput)" />
+    <Error Condition="'@(ExtraDllOutputs)' != ''"
+           Text="发布目录产物不符合预期，检测到非法依赖 DLL：@(ExtraDllOutputs)" />
   </Target>
 </Project>

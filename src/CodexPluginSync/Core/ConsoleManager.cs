@@ -23,6 +23,8 @@ namespace CodexPluginSync.Core
         private const int STD_OUTPUT_HANDLE = -11;
         private const int STD_ERROR_HANDLE = -12;
 
+        public static readonly Encoding Utf8NoBom = new UTF8Encoding(false);
+
         public static void EnsureConsoleForCli()
         {
             // 尝试挂载父进程控制台
@@ -30,11 +32,11 @@ namespace CodexPluginSync.Core
 
             try
             {
-                Console.OutputEncoding = Encoding.UTF8;
+                Console.OutputEncoding = Utf8NoBom;
             }
             catch (Exception) { }
 
-            // 重新绑定 Console.Out 和 Console.Error，确保 Console.WriteLine 正常输出到控制台或管道
+            // 重新绑定 Console.Out 和 Console.Error，确保 Console.WriteLine 正常输出到控制台或管道（严格无 BOM）
             try
             {
                 IntPtr stdOut = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -42,7 +44,7 @@ namespace CodexPluginSync.Core
                 {
                     SafeFileHandle safeOut = new SafeFileHandle(stdOut, false);
                     FileStream outStream = new FileStream(safeOut, FileAccess.Write);
-                    StreamWriter writer = new StreamWriter(outStream, Encoding.UTF8) { AutoFlush = true };
+                    StreamWriter writer = new StreamWriter(outStream, Utf8NoBom) { AutoFlush = true };
                     Console.SetOut(writer);
                 }
             }
@@ -55,7 +57,7 @@ namespace CodexPluginSync.Core
                 {
                     SafeFileHandle safeErr = new SafeFileHandle(stdErr, false);
                     FileStream errStream = new FileStream(safeErr, FileAccess.Write);
-                    StreamWriter writer = new StreamWriter(errStream, Encoding.UTF8) { AutoFlush = true };
+                    StreamWriter writer = new StreamWriter(errStream, Utf8NoBom) { AutoFlush = true };
                     Console.SetError(writer);
                 }
             }

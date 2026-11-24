@@ -7,7 +7,7 @@
 
 | 范围 | 文件 | 验证方式 |
 | --- | --- | --- |
-| 构建（内置 MSBuild，单 exe 断言） | `build/CodexPluginSync.csproj` | `MSBuild -p:Configuration=Release` → 输出目录仅 `CodexPluginSync.exe` |
+| 构建（内置 MSBuild，双入口断言） | `build/CodexPluginSync.csproj`、`CodexPluginSync.Cli.csproj` | `MSBuild -p:Configuration=Release` → 各自生成纯净 exe，无依赖 DLL |
 | 入口与参数分派 | `Program.cs`、`Cli/CliOptions.cs` | `--help` / `--version` / 未知参数退出 1（自测用例） |
 | 退出码契约 C-4 | `Cli/ExitCodes.cs` | 0/1/2 三值，无第四值 |
 | `--json` 信封 C-5 | `Cli/CliRunner.cs`、`Core/SnapshotWriter.cs` | 自测断言：stdout 只有一个 JSON 对象、`schemaVersion=1`、`exitCode` 与进程退出码同源 |
@@ -87,5 +87,5 @@ C# 侧已接管全部写入命令 `--sync`、`--rollback`、`--cleanup-only`、`
 ## 已知环境限制
 
 - 本机无 .NET Framework 4.8 targeting pack，内置 MSBuild 回退到 4.0 程序集（`MSB3644` 警告）。
-  csproj 已把 `mscorlib` 标为 `Private=false`，并用 `AssertSingleFileOutput` 硬断言输出目录只有 1 个 exe。
+  csproj 已把 `mscorlib` 标为 `Private=false`，并用 `AssertSingleFileOutput` 硬断言各项目只产出自身 exe 且无依赖 DLL。
 - 因此当前 exe 的 IL 级别等同 4.0 编译结果，仍需在装有 4.8 targeting pack 的环境重建后再做发布签核。

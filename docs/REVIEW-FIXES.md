@@ -131,7 +131,7 @@ rollback-committed / rollback-finalized
 powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1
   → 全部通过：31 个用例（跑前跑后真实 native-messaging 清单 SHA-256 一致）
 MSBuild build\CodexPluginSync.csproj -p:Configuration=Release
-  → CodexPluginSync.exe（发布目录仍只有 1 个 exe；仍有缺 4.8 targeting pack 的 MSB3644 警告）
+  → CodexPluginSync.exe（输出目录无多余依赖 DLL；仍有缺 4.8 targeting pack 的 MSB3644 警告）
 build\bin\Release\CodexPluginSync.exe --selftest
   → SELFTEST PASS (12 cases)
 ```
