@@ -2031,22 +2031,32 @@ namespace CodexPluginSync.Tests
             context.Expect(defaultSettings.AutoCheckHours == 0, "default AutoCheckHours is 0 (disabled)", defaultSettings.AutoCheckHours.ToString());
             context.Expect(defaultSettings.RunAtStartup == false, "default RunAtStartup is false", defaultSettings.RunAtStartup.ToString());
 
-            // 验证 settings.json 序列化与范围校验：0 值保留与溢出回退
-            SettingsDto dtoZero = JsonRead.FromText<SettingsDto>("{\"schemaVersion\":1,\"autoCheckHours\":0}");
-            Settings sZero = new Settings();
-            if (dtoZero.AutoCheckHours >= 0 && dtoZero.AutoCheckHours <= 72) { sZero.AutoCheckHours = dtoZero.AutoCheckHours; }
-            context.Expect(sZero.AutoCheckHours == 0, "explicit autoCheckHours 0 stays 0", sZero.AutoCheckHours.ToString());
+            // 验证真实 Settings.Load 路径：0 值保留、正常配置与范围超限回退
+            string tempDir = Path.Combine(Path.GetTempPath(), "CodexPluginSync-test-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(tempDir);
+                string testSettingsPath = Path.Combine(tempDir, "settings.json");
 
-            SettingsDto dtoSix = JsonRead.FromText<SettingsDto>("{\"schemaVersion\":1,\"autoCheckHours\":6}");
-            Settings sSix = new Settings();
-            if (dtoSix.AutoCheckHours >= 0 && dtoSix.AutoCheckHours <= 72) { sSix.AutoCheckHours = dtoSix.AutoCheckHours; }
-            context.Expect(sSix.AutoCheckHours == 6, "explicit autoCheckHours 6 stays 6", sSix.AutoCheckHours.ToString());
+                // 1. 显式配置 0（关闭）通过实际 Settings.Load 读取，确认保持为 0
+                File.WriteAllText(testSettingsPath, "{\"schemaVersion\":1,\"autoCheckHours\":0}", ConsoleManager.Utf8NoBom);
+                Settings loadedZero = Settings.Load(testSettingsPath, null);
+                context.Expect(loadedZero.AutoCheckHours == 0, "Settings.Load with autoCheckHours 0 stays 0", loadedZero.AutoCheckHours.ToString());
 
-            SettingsDto dtoOverflow = JsonRead.FromText<SettingsDto>("{\"schemaVersion\":1,\"autoCheckHours\":999}");
-            Settings sOverflow = new Settings();
-            if (dtoOverflow.AutoCheckHours >= 0 && dtoOverflow.AutoCheckHours <= 72) { sOverflow.AutoCheckHours = dtoOverflow.AutoCheckHours; }
-            else { sOverflow.AutoCheckHours = 0; }
-            context.Expect(sOverflow.AutoCheckHours == 0, "out-of-range autoCheckHours falls back to 0", sOverflow.AutoCheckHours.ToString());
+                // 2. 显式配置 6 通过实际 Settings.Load 读取，确认保持为 6
+                File.WriteAllText(testSettingsPath, "{\"schemaVersion\":1,\"autoCheckHours\":6}", ConsoleManager.Utf8NoBom);
+                Settings loadedSix = Settings.Load(testSettingsPath, null);
+                context.Expect(loadedSix.AutoCheckHours == 6, "Settings.Load with autoCheckHours 6 stays 6", loadedSix.AutoCheckHours.ToString());
+
+                // 3. 越界配置 999 通过实际 Settings.Load 读取，确认安全回退为 0
+                File.WriteAllText(testSettingsPath, "{\"schemaVersion\":1,\"autoCheckHours\":999}", ConsoleManager.Utf8NoBom);
+                Settings loadedOverflow = Settings.Load(testSettingsPath, null);
+                context.Expect(loadedOverflow.AutoCheckHours == 0, "Settings.Load with out-of-range autoCheckHours falls back to 0", loadedOverflow.AutoCheckHours.ToString());
+            }
+            finally
+            {
+                try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true); } catch { }
+            }
 
             // M6: GitHub 版本号正规化与比较算法契约
             string v1 = UpdateChecker.NormalizeVersion("v1.0.1");

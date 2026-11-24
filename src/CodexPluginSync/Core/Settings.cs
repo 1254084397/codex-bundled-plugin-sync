@@ -28,8 +28,13 @@ namespace CodexPluginSync.Core
 
         public static Settings Load(Logger log)
         {
+            return Load(null, log);
+        }
+
+        public static Settings Load(string explicitPath, Logger log)
+        {
             Settings settings = new Settings();
-            string path = CodexPaths.SettingsPath;
+            string path = explicitPath ?? CodexPaths.SettingsPath;
             try
             {
                 if (!File.Exists(path))

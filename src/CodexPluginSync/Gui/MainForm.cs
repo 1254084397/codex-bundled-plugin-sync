@@ -304,6 +304,11 @@ namespace CodexPluginSync.Gui
                 {
                     // 确保任何正在进行的后台静默检查完全退出后再开始操作，最长等待 5 秒
                     Monitor.TryEnter(_operationLock, 5000, ref lockTaken);
+                    if (!lockTaken)
+                    {
+                        writer.WriteLine("错误：已有后台任务正在占用操作资源，等待超时（5 秒），操作已安全中止。请稍后重试。");
+                        return;
+                    }
                     _isOperationRunning = true;
                     work(writer);
                 }
@@ -313,9 +318,9 @@ namespace CodexPluginSync.Gui
                 }
                 finally
                 {
-                    _isOperationRunning = false;
                     if (lockTaken)
                     {
+                        _isOperationRunning = false;
                         Monitor.Exit(_operationLock);
                     }
                 }
@@ -1025,9 +1030,9 @@ namespace CodexPluginSync.Gui
                 catch (Exception) { }
                 finally
                 {
-                    _isOperationRunning = false;
                     if (lockTaken)
                     {
+                        _isOperationRunning = false;
                         Monitor.Exit(_operationLock);
                     }
                 }
