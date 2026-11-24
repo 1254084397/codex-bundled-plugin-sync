@@ -3,6 +3,11 @@ setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul
 title Codex bundled plugin sync - do not close
 
+set "EXE_PATH=%~dp0CodexPluginSync.exe"
+if not exist "%EXE_PATH%" set "EXE_PATH=%~dp0build\bin\Release\CodexPluginSync.exe"
+
+if exist "%EXE_PATH%" goto :DISPATCH_EXE
+
 if "%CODEX_HOME%"=="" set "CODEX_HOME=%USERPROFILE%\CodexHome"
 set "SCRIPT_DIR=%~dp0scripts"
 set "SYNC_SCRIPT=%SCRIPT_DIR%\sync-openai-bundled.ps1"
@@ -24,6 +29,75 @@ if /i "%MODE%"=="--cleanup-only" goto :MODE_CLEANUP
 if /i "%MODE%"=="--rollback" goto :MODE_ROLLBACK
 if not "%MODE%"=="" if /i not "%MODE%"=="--sync" goto :MODE_HELP
 goto :MODE_SYNC
+
+:DISPATCH_EXE
+set "MODE=%~1"
+if "%MODE%"=="" set "MODE=--sync"
+
+if /i "%MODE%"=="--help" goto :EXE_HELP
+if /i "%MODE%"=="/h" goto :EXE_HELP
+if /i "%MODE%"=="-h" goto :EXE_HELP
+
+if /i "%MODE%"=="--check" (
+  echo ================================================================
+  echo Codex bundled plugin check
+  echo ================================================================
+  "%EXE_PATH%" --check %2 %3 %4 %5 %6 %7 %8 %9
+  set "EXE_EXIT=!ERRORLEVEL!"
+  if "!EXE_EXIT!"=="2" set "EXE_EXIT=0"
+  goto :EXE_DONE
+)
+
+if /i "%MODE%"=="--sync" (
+  echo ================================================================
+  echo Codex bundled plugin sync
+  echo ================================================================
+  "%EXE_PATH%" --sync %2 %3 %4 %5 %6 %7 %8 %9
+  set "EXE_EXIT=!ERRORLEVEL!"
+  goto :EXE_DONE
+)
+
+if /i "%MODE%"=="--rollback" (
+  echo ================================================================
+  echo Codex bundled plugin rollback
+  echo ================================================================
+  "%EXE_PATH%" --rollback %2 %3 %4 %5 %6 %7 %8 %9
+  set "EXE_EXIT=!ERRORLEVEL!"
+  goto :EXE_DONE
+)
+
+if /i "%MODE%"=="--cleanup-only" (
+  echo ================================================================
+  echo Codex bundled plugin cleanup
+  echo ================================================================
+  "%EXE_PATH%" --cleanup-only %2 %3 %4 %5 %6 %7 %8 %9
+  set "EXE_EXIT=!ERRORLEVEL!"
+  goto :EXE_DONE
+)
+
+"%EXE_PATH%" %*
+set "EXE_EXIT=!ERRORLEVEL!"
+goto :EXE_DONE
+
+:EXE_HELP
+echo.
+echo Codex bundled plugin tools (EXE mode)
+echo.
+echo Usage:
+echo   %~nx0                  Synchronize bundled plugins (default: --sync)
+echo   %~nx0 --sync           Synchronize bundled plugins
+echo   %~nx0 --check          Check versions, processes, disk space, and backup status
+echo   %~nx0 --cleanup-only   Clean old backups, stages, and logs only
+echo   %~nx0 --rollback       Restore the newest completed rollback backup
+echo   %~nx0 --help           Show this help
+echo.
+set "EXE_EXIT=0"
+goto :EXE_DONE
+
+:EXE_DONE
+echo.
+pause
+endlocal & exit /b %EXE_EXIT%
 
 :MODE_HELP
 echo.

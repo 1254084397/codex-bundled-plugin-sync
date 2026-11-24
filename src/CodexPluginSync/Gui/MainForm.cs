@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Text;
@@ -18,6 +19,8 @@ namespace CodexPluginSync.Gui
     {
         private readonly Label _headline = new Label();
         private readonly Label _detail = new Label();
+        private readonly LinkLabel _updateStatus = new LinkLabel();
+        private readonly Button _checkUpdates = new Button();
         private readonly TextBox _log = new TextBox();
         private readonly Button _check = new Button();
         private readonly Button _sync = new Button();
@@ -29,6 +32,7 @@ namespace CodexPluginSync.Gui
         private readonly ProgressBar _progress = new ProgressBar();
 
         private string _codexHome;
+        private string _latestReleaseUrl = UpdateChecker.RepositoryUrl + "/releases";
         private bool _busy;
 
         public MainForm()
@@ -44,12 +48,13 @@ namespace CodexPluginSync.Gui
             TableLayoutPanel root = new TableLayoutPanel();
             root.Dock = DockStyle.Fill;
             root.ColumnCount = 1;
-            root.RowCount = 5;
+            root.RowCount = 6;
             root.Padding = new Padding(12);
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             Controls.Add(root);
 
@@ -59,17 +64,32 @@ namespace CodexPluginSync.Gui
             _headline.Margin = new Padding(0, 0, 0, 4);
             root.Controls.Add(_headline, 0, 0);
 
-            _detail.Text = _codexHome;
+            _detail.Text = _codexHome + "  ·  当前版本 " + Cli.CliRunner.ToolVersion;
             _detail.AutoSize = true;
             _detail.ForeColor = SystemColors.GrayText;
             _detail.Margin = new Padding(0, 0, 0, 10);
             root.Controls.Add(_detail, 0, 1);
 
+            _updateStatus.Text = "正在检查 GitHub 版本…";
+            _updateStatus.AutoSize = true;
+            _updateStatus.ForeColor = SystemColors.GrayText;
+            _updateStatus.LinkColor = SystemColors.HotTrack;
+            _updateStatus.Margin = new Padding(0, 0, 0, 8);
+            _updateStatus.LinkClicked += delegate
+            {
+                try
+                {
+                    Process.Start(!string.IsNullOrEmpty(_latestReleaseUrl) ? _latestReleaseUrl : UpdateChecker.RepositoryUrl + "/releases");
+                }
+                catch (Exception) { }
+            };
+            root.Controls.Add(_updateStatus, 0, 2);
+
             FlowLayoutPanel buttons = new FlowLayoutPanel();
             buttons.AutoSize = true;
             buttons.WrapContents = true;
             buttons.Margin = new Padding(0, 0, 0, 8);
-            root.Controls.Add(buttons, 0, 2);
+            root.Controls.Add(buttons, 0, 3);
 
             ConfigureButton(_check, "检查", delegate { RunCheck(); });
             ConfigureButton(_sync, "同步", delegate { RunWithConfirm("同步会替换 Codex 的内置插件目录（先自动备份，可回滚）。继续？", RunSync); });
@@ -78,6 +98,7 @@ namespace CodexPluginSync.Gui
             ConfigureButton(_diag, "导出诊断", delegate { RunDiag(); });
             ConfigureButton(_openLogs, "打开日志", delegate { OpenFolder(CodexPaths.ToolLogDirectory); });
             ConfigureButton(_openHome, "打开 CodexHome", delegate { OpenFolder(_codexHome); });
+            ConfigureButton(_checkUpdates, "检查版本", delegate { RefreshUpdateStatus(); });
 
             buttons.Controls.Add(_check);
             buttons.Controls.Add(_sync);
@@ -86,6 +107,7 @@ namespace CodexPluginSync.Gui
             buttons.Controls.Add(_diag);
             buttons.Controls.Add(_openLogs);
             buttons.Controls.Add(_openHome);
+            buttons.Controls.Add(_checkUpdates);
 
             _log.Multiline = true;
             _log.ReadOnly = true;
@@ -93,15 +115,15 @@ namespace CodexPluginSync.Gui
             _log.Dock = DockStyle.Fill;
             _log.BackColor = SystemColors.Window;
             _log.Font = new Font("Consolas", 9f);
-            root.Controls.Add(_log, 0, 3);
+            root.Controls.Add(_log, 0, 4);
 
             _progress.Style = ProgressBarStyle.Marquee;
             _progress.Visible = false;
             _progress.Dock = DockStyle.Fill;
             _progress.Height = 6;
-            root.Controls.Add(_progress, 0, 4);
+            root.Controls.Add(_progress, 0, 5);
 
-            Shown += delegate { RefreshStatus(); };
+            Shown += delegate { RefreshStatus(); RefreshUpdateStatus(); };
         }
 
         private void ConfigureButton(Button button, string text, EventHandler handler)
@@ -207,7 +229,49 @@ namespace CodexPluginSync.Gui
             _diag.Enabled = enabled;
             _openLogs.Enabled = enabled;
             _openHome.Enabled = enabled;
+            _checkUpdates.Enabled = enabled;
             Cursor = enabled ? Cursors.Default : Cursors.WaitCursor;
+        }
+
+        private void RefreshUpdateStatus()
+        {
+            _updateStatus.Text = "正在检查 GitHub 版本…";
+            _updateStatus.LinkColor = SystemColors.GrayText;
+            Thread thread = new Thread(new ThreadStart(delegate
+            {
+                UpdateInfo update = UpdateChecker.Check(Cli.CliRunner.ToolVersion);
+                if (IsHandleCreated && !IsDisposed)
+                {
+                    try
+                    {
+                        BeginInvoke((MethodInvoker)delegate
+                        {
+                            if (!string.IsNullOrEmpty(update.ReleaseUrl))
+                            {
+                                _latestReleaseUrl = update.ReleaseUrl;
+                            }
+                            if (!update.Succeeded)
+                            {
+                                _updateStatus.Text = (update.Message ?? "无法取得版本信息") + " · 点击访问 Releases";
+                                _updateStatus.LinkColor = SystemColors.HotTrack;
+                            }
+                            else if (update.IsNewer)
+                            {
+                                _updateStatus.Text = "发现新版本 " + update.LatestVersion + "（当前 " + update.CurrentVersion + "）· 点击前往 GitHub Releases 查看更新说明";
+                                _updateStatus.LinkColor = Color.DarkOrange;
+                            }
+                            else
+                            {
+                                _updateStatus.Text = "当前版本 " + update.CurrentVersion + " 已是最新 · 点击访问 Releases";
+                                _updateStatus.LinkColor = Color.DarkGreen;
+                            }
+                        });
+                    }
+                    catch (Exception) { }
+                }
+            }));
+            thread.IsBackground = true;
+            thread.Start();
         }
 
         private void RunWithConfirm(string question, Action run)

@@ -35,6 +35,7 @@ try {
 
     Copy-Item -LiteralPath $exe -Destination $stage
     Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination $stage
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'CHANGELOG.md') -Destination $stage
     Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination $stage
     Copy-Item -LiteralPath (Join-Path $repoRoot 'sync-codex-bundled.cmd') -Destination $stage -ErrorAction SilentlyContinue
 

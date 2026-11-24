@@ -1,0 +1,23 @@
+# Changelog
+
+## 1.0.0 - 2026-11-24
+
+### Added
+
+- WinForms desktop interface for status checks, synchronization, rollback, cleanup, and diagnostic export.
+- Single-exe release packaging through `build/package.ps1`.
+- Background GitHub Releases check in the GUI, showing the current version and a newer published version when available.
+- Headless CLI commands for `--check`, `--sync`, `--rollback`, `--cleanup-only`, `--export-diag`, and `--selftest`.
+- Component snapshot backups, crash recovery journal, SHA-256 verification, EFS handling, native-host path checks, and redacted diagnostic archives.
+
+### Verified
+
+- Built with the in-box .NET Framework MSBuild workflow.
+- Release packaging requires a passing `--selftest` run.
+- Fixture coverage and real-machine acceptance evidence are recorded in [docs/M1-STATUS.md](docs/M1-STATUS.md).
+
+### Known limits
+
+- The tray icon and scheduled checks are planned for M4 and are not included in `1.0.0`.
+- The target machine must already have .NET Framework 4.8.
+- GitHub version checking is optional; network failures do not block local checks or synchronization.

@@ -8,6 +8,8 @@
 
 [English](#english) · [中文](#中文)
 
+**Current release: `1.0.0` · M3 GUI available · M4 tray and scheduled checks pending**
+
 ## English
 
 Codex Desktop stores its bundled plugins inside a Windows AppX installation. A local Codex environment can also use a persistent marketplace and selected plugin caches under `CodexHome`. After a Desktop update, these locations can drift apart.
@@ -44,7 +46,7 @@ The AppX bundle can contain plugins that are not part of the persistent Marketpl
 
 ### Quick start
 
-Double-click `CodexPluginSync.exe` — that opens the window shown below. Press **检查** to see the current state (nothing is written), then **同步** if it says an update is needed. Both write actions ask for confirmation first.
+Double-click `CodexPluginSync.exe` — that opens the Windows desktop interface. It shows the current tool version and checks GitHub Releases for a newer published version in the background. Press **检查** to see the current Codex state (nothing is written), then **同步** if it says an update is needed. Both write actions ask for confirmation first.
 
 ![主界面](docs/screenshots/gui-main.png)
 
@@ -72,7 +74,7 @@ set CODEX_HOME=E:\CodexHome
 CodexPluginSync.exe --check
 ```
 
-> The legacy `sync-codex-bundled.cmd` wrapper still works and still defaults to “sync” with no arguments. The PowerShell scripts under `scripts/` remain as a reference implementation and for scheduled tasks.
+> The legacy `sync-codex-bundled.cmd` wrapper still works and still defaults to “sync” with no arguments. When `CodexPluginSync.exe` is present (such as in release zips), it calls the exe directly and maps exit code `2` back to `0` for batch compatibility; in raw source checkouts without the binary, it falls back to the PowerShell scripts under `scripts/`.
 
 ### What blocks a sync
 
@@ -111,21 +113,22 @@ powershell -ExecutionPolicy Bypass -File .\scripts\sync-openai-bundled.ps1 -Root
 
 - Windows 10 or Windows 11
 - Codex Desktop installed as a Microsoft Store/AppX package
-- PowerShell 5.1 or later
+- .NET Framework 4.8 runtime (built-in on Windows 10 1903+ and Windows 11)
 - Permission to read the AppX installation and write to the selected `CodexHome`
+- *For building from source:* in-box MSBuild or Visual Studio. Note that without the .NET 4.8 Targeting Pack, local builds compile against in-box runtime assemblies; official GitHub Release artifacts should be built in an environment with the .NET 4.8 Developer Pack or CI runner.
 
-### Roadmap
+### Current status and roadmap
 
-The next milestone turns this into a **single-exe distribution** with a GUI: one status screen, one sync button, real progress, backup browsing, a tray indicator, and a diagnostic export. The specification is frozen as contracts in **[docs/DESIGN.md](docs/DESIGN.md)** — transaction state machine, component-snapshot backups, exit codes, JSON schema, EFS and native-messaging boundaries, redaction rules.
+The project now ships a **single-exe distribution** with a WinForms status screen, sync/rollback/cleanup/diagnostic actions, background work, release-version display, and the headless CLI. The specification and remaining boundaries are recorded in **[docs/DESIGN.md](docs/DESIGN.md)**. The test and real-machine evidence is summarized in **[docs/M1-STATUS.md](docs/M1-STATUS.md)**.
 
 | Stage | Scope | Done when |
 | --- | --- | :--- |
-| M0 | Freeze contracts: state machine, backup model, exit codes, JSON schema, recovery, EFS/native-host/redaction boundaries | `docs/DESIGN.md` v0.2 agreed |
-| M1 | Headless core + selftest: paths, check, sync, rollback, cleanup, journal, backup store, hasher | `--selftest` green on the fixture suite |
-| M2 | CLI compatibility layer: arguments, exit codes, `--json`, `.cmd` calls the exe (mapping `2` back to `0`) | Existing scheduled tasks keep working |
-| M3 | WinForms UI: status screen, sync/rollback/cleanup/diagnostics buttons, log pane | **Done for the first increment** — full sync and rollback work through the GUI |
-| M4 | Tray icon and scheduled checks (off by default) | Resident mode does not disturb the core |
-| M5 | Real Windows acceptance, build/CI, README rewrite | v1.0 |
+| M0 | Freeze contracts: state machine, backup model, exit codes, JSON schema, recovery, EFS/native-host/redaction boundaries | Done |
+| M1 | Headless core + selftest: paths, check, sync, rollback, cleanup, journal, backup store, hasher | Done; selftest and real-machine evidence recorded |
+| M2 | CLI compatibility layer: arguments, exit codes, `--json`, `.cmd` calls the exe | Done for the current release |
+| M3 | WinForms UI: status screen, sync/rollback/cleanup/diagnostics buttons, log pane, release update status | Done in `1.0.0` |
+| M4 | Tray icon and scheduled checks (off by default) | Planned |
+| M5 | Broader CI/release automation and final acceptance sweep | Planned |
 
 Build a release zip for someone else:
 
@@ -133,7 +136,7 @@ Build a release zip for someone else:
 powershell -ExecutionPolicy Bypass -File .\build\package.ps1
 ```
 
-That builds, refuses to package unless `--selftest` is green, and writes `dist\CodexPluginSync-<version>.zip` (exe + README + LICENSE).
+That builds, refuses to package unless `--selftest` is green, and writes `dist\CodexPluginSync-<version>.zip` (exe + sync-codex-bundled.cmd + README + CHANGELOG + LICENSE). The current release is `1.0.0`; the GUI also reports when GitHub has a newer release.
 
 Design notes worth knowing now:
 
@@ -205,18 +208,18 @@ Codex Desktop 的内置插件装在 AppX 包里，运行时却从 `CodexHome` �
 
 需要说明的是，这个工具有明确的寿命：如果将来某个版本的 Codex Desktop 自己重新物化插件，`--check` 会长期返回 `Update needed: No`，项目就该归档。所以建议先只用 `--check` 观察一两个版本，确认状态确实会随更新漂移，再让它执行写入操作。
 
-### Roadmap / 路线图
+### 当前状态与路线图
 
-下一步会把它做成**单 exe 分发 + 图形界面**：一个状态页、一个同步按钮、真实进度、备份浏览、托盘提示和诊断导出。规格已按“先冻结契约”整理成 **[docs/DESIGN.md](docs/DESIGN.md)**（事务状态机、组件快照备份、退出码、JSON schema、EFS 与 native messaging 边界、脱敏规则）。
+现在已经提供**单 exe 分发 + WinForms 图形界面**：状态检查、同步、回滚、清理、诊断导出、后台执行，以及 GitHub 发布版本检查。设计契约见 **[docs/DESIGN.md](docs/DESIGN.md)**，实现和真机证据见 **[docs/M1-STATUS.md](docs/M1-STATUS.md)**。
 
 | 阶段 | 内容 | 完成判据 |
 | --- | --- | :--- |
-| M0 | 冻结契约：状态机、备份模型、退出码、JSON schema、恢复策略、EFS/注册表/脱敏边界 | `docs/DESIGN.md` v0.2 定稿 |
-| M1 | 无界面 Core + selftest：路径、检查、同步、回滚、清理、journal、备份存储、哈希 | `--selftest` 在 fixture 上全绿 |
-| M2 | CLI 兼容层：参数、退出码、`--json`、`.cmd` 改为调用 exe（并把 `2` 映射回 `0`） | 旧计划任务不中断 |
-| M3 | WinForms 主界面：状态、同步/回滚/清理/诊断按钮、日志区 | **首个增量已完成**：能在界面上完成同步与回滚 |
-| M4 | 托盘与定时检查（默认关闭） | 常驻不干扰 Core |
-| M5 | 真机验收、构建/CI、README 重写 | v1.0 |
+| M0 | 冻结契约：状态机、备份模型、退出码、JSON schema、恢复策略、EFS/注册表/脱敏边界 | 已完成 |
+| M1 | 无界面 Core + selftest：路径、检查、同步、回滚、清理、journal、备份存储、哈希 | 已完成；已有 fixture 和真机证据 |
+| M2 | CLI 兼容层：参数、退出码、`--json`、`.cmd` 调用 exe | 当前版本已完成 |
+| M3 | WinForms 主界面：状态、同步/回滚/清理/诊断按钮、日志区、版本更新状态 | `1.0.0` 已完成 |
+| M4 | 托盘与定时检查（默认关闭） | 计划中 |
+| M5 | 更完整的 CI/发布自动化与最终验收 | 计划中 |
 
 给别人用的发布包：
 
@@ -224,7 +227,7 @@ Codex Desktop 的内置插件装在 AppX 包里，运行时却从 `CodexHome` �
 powershell -ExecutionPolicy Bypass -File .\build\package.ps1
 ```
 
-它会先构建、自检不过就拒绝打包，最后生成 `dist\CodexPluginSync-<版本>.zip`（exe + README + LICENSE）。
+它会先构建、自检不过就拒绝打包，最后生成 `dist\CodexPluginSync-<版本>.zip`（exe + sync-codex-bundled.cmd + README + CHANGELOG + LICENSE）。
 
 现在就该知道的几个设计点：
 
@@ -237,7 +240,7 @@ powershell -ExecutionPolicy Bypass -File .\build\package.ps1
 
 ### 快速使用
 
-双击 `CodexPluginSync.exe` 就是界面：先点 **检查**（只读，不写任何东西），需要更新时再点 **同步**。两个写操作都会先弹确认框。
+双击 `CodexPluginSync.exe` 就是界面：窗口会显示当前工具版本，并在后台检查 GitHub 是否有更新；先点 **检查**（只读，不写任何东西），需要更新时再点 **同步**。两个写操作都会先弹确认框。
 
 ![主界面](docs/screenshots/gui-main.png)
 
@@ -270,7 +273,7 @@ set CODEX_HOME=E:\CodexHome
 CodexPluginSync.exe --check
 ```
 
-> 旧的 `sync-codex-bundled.cmd` 仍然可用，无参数依旧是“同步”；`scripts/` 下的 PowerShell 实现保留为对照与计划任务入口。
+> 旧的 `sync-codex-bundled.cmd` 仍然可用，无参数依旧默认执行“同步”。当目录中存在 `CodexPluginSync.exe`（如发布包解压后）时，它会自动调用 exe 并将退出码 `2` 映射回 `0`，无需依赖 `scripts/`；在源码环境中若未编译 exe，则自动回落到 `scripts/` 的 PowerShell 实现。
 
 ### 什么会阻止同步
 
