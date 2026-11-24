@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/icon_512.png" alt="Codex Bundled Plugin Sync Icon" width="128" height="128" /><br/>
+
 # ⚡ Codex Bundled Plugin Sync
 
 **Windows utility for keeping Codex Desktop bundled plugins synchronized with a persistent local marketplace and cache.**
@@ -179,6 +181,7 @@ Codex Desktop 的内置插件（浏览器控制、Chrome 原生消息宿主、�
 - 🔍 **SHA-256 树指纹校验**：替换前对文件树做全量摘要比对，只有完全吻合才执行提交。
 - 🌐 **Chrome Native Host 自动修补**：自动检测注册表原生消息宿主路径漂移并修复，确保浏览器扩展顺利重连。
 - ↩️ **细粒度组件快照回滚**：只备份更新的项目，一键无损退回到任意历史备份。
+- 🎨 **原生图标与托盘驻留**：内嵌全新设计的双色拼图 Squircle 品牌图标，支持无黑框最小化到系统托盘（NotifyIcon）、定期后台巡检与无打扰气泡提醒。
 
 ### 快速开始
 

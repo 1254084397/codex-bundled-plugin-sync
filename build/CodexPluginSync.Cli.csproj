@@ -18,6 +18,7 @@
     <LangVersion>5</LangVersion>
     <PlatformTarget>AnyCPU</PlatformTarget>
     <ApplicationManifest>..\src\CodexPluginSync\App.manifest</ApplicationManifest>
+    <ApplicationIcon>..\assets\app.ico</ApplicationIcon>
     <WarningLevel>4</WarningLevel>
     <DefineConstants>TRACE</DefineConstants>
     <NoWarn>1591</NoWarn>

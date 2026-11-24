@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.1 - 2026-11-25
+
+### Added
+
+- **New App Icon & Brand Identity**: Custom designed metallic squircle icon featuring an interlocking block cube inside neon orbit rings. Extracted with high-precision subpixel anti-aliasing to provide a transparent, edge-clean visual identity.
+- **Native Windows Shell & Binary Embedding**: Embedded `app.ico` (multi-resolution mipmap with 256x256, 128x128, 64x64, 48x48, 32x32, 16x16) into both `CodexPluginSync.exe` and `CodexPluginSync.Cli.exe` via Win32 `ApplicationIcon`. The icon appears natively in Windows File Explorer, desktop shortcuts, taskbar, Alt+Tab window switching, and the system tray.
+- **Frontend & Repository Assets**: Bundled high-resolution transparent PNGs (512x512, 1024x1024, tight crop) and `.ico` in the repository `assets/` directory.
+
+### Improved
+
+- **UI Lock & Timeout Resilience**: Enhanced GUI mutex synchronization between background checks and user-triggered operations. If acquiring the operation lock times out (5s), the operation aborts safely without hanging, ensuring `_busy` resets, progress bar hides, and action buttons remain fully responsive.
+- **Configuration & Self-Test Hardening**: Strengthened `Settings.Load` with explicit path loading tests and verified boundary checks (`autoCheckHours` 0 stays disabled, 6 stays enabled, and out-of-range values safely fall back to disabled).
+
 ## 1.0.0 - 2026-11-24
 
 ### Added
