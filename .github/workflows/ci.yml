@@ -1,0 +1,39 @@
+name: CI & Tests
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: Build & Verify (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build CodexPluginSync (Release)
+        run: |
+          msbuild build/CodexPluginSync.csproj -p:Configuration=Release -nologo -v:m
+
+      - name: Run Core Self-Test Suite (27 Cases)
+        run: |
+          .\build\bin\Release\CodexPluginSync.exe --selftest
+
+      - name: Verify Package Generation
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\build\package.ps1
+
+      - name: Upload Packaged Release Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CodexPluginSync-Package
+          path: dist/*.zip
