@@ -174,7 +174,7 @@ Codex 运行时并不直接从安装目录加载插件，而是先用一份"物�
 | UI 框架 | WinForms | 界面复杂度不需要 XAML；启动快、体积小 |
 | 目标框架 | `.NET Framework 4.8` | Win10 1903+ / Win11 预装运行时 |
 | 构建 | in-box `MSBuild.exe` | 本地与 CI 均无需安装 SDK |
-| 分发物 | 单个 `CodexPluginSync.exe`（约 200–300 KB） | 可放 U 盘、可直接发给别人 |
+| 分发物 | `CodexPluginSync.exe` + `CodexPluginSync.Cli.exe`（双独立入口发布包） | GUI 与 CLI 独立，零外部 DLL 依赖 |
 | 提权 | `asInvoker` | 现有流程不需要提权；需要时给提示而非直接弹 UAC |
 | 进程模型 | 单进程 + 后台工作线程 | 运行时不依赖 PowerShell 脚本 |
 | 第三方依赖 | 零（无 NuGet、无外置 DLL） | 降低供应链与杀软误报风险 |
