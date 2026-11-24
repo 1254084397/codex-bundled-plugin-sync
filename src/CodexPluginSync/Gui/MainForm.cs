@@ -306,11 +306,13 @@ namespace CodexPluginSync.Gui
                     Monitor.TryEnter(_operationLock, 5000, ref lockTaken);
                     if (!lockTaken)
                     {
-                        writer.WriteLine("错误：已有后台任务正在占用操作资源，等待超时（5 秒），操作已安全中止。请稍后重试。");
-                        return;
+                        error = "已有后台任务正在占用操作资源，等待锁超时（5 秒），操作已安全中止。请稍后重试。";
                     }
-                    _isOperationRunning = true;
-                    work(writer);
+                    else
+                    {
+                        _isOperationRunning = true;
+                        work(writer);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -344,7 +346,11 @@ namespace CodexPluginSync.Gui
                             _progressBar.Visible = false;
                             _btnCancel.Visible = false;
                             SetButtonsEnabled(true);
-                            if (refreshAfterwards) { RefreshStatus(); }
+                            if (error != null)
+                            {
+                                _lblBottomStatus.Text = "当前阶段：操作异常或超时";
+                            }
+                            if (refreshAfterwards && lockTaken) { RefreshStatus(); }
                         });
                     }
                     catch (Exception) { }
