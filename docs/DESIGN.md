@@ -23,7 +23,7 @@
 | --- | --- | --- |
 | 1 | 事务改为显式状态机；交换阶段不再承诺可取消；journal 逐阶段原子更新 | §6.4、§7.2、§11.1 |
 | 2 | 备份改为"组件快照"，只记录本次实际改动的组件；回滚按快照执行 | §6.3、§7.3 |
-| 3 | 明确"单 exe 分发"边界，不再称自包含 | §4.3 |
+| 3 | 明确"双独立入口分发"边界，不再称自包含 | §4.3 |
 | 4 | EFS 提升为独立高风险契约，记录并恢复原加密状态 | §8 |
 | 5 | 退出码与 `--json` 契约定稿，`.cmd` 做 2→0 兼容映射 | §13 |
 | 6 | 进程关闭默认不强杀，区分检测/锁定/确认/超时 | §10 |
@@ -106,7 +106,7 @@ Codex 运行时并不直接从安装目录加载插件，而是先用一份"物�
 
 ### 2.1 目标
 
-1. **单 exe 分发**：一个文件双击可用，不依赖仓库里的脚本或第三方 DLL。
+1. **双独立入口分发**：GUI 与 CLI 两个独立程序开箱即用，零外部 DLL 依赖，不依赖仓库里的脚本。
 2. **普通用户可用**：状态一眼看懂，主操作一个按钮，失败能看懂原因。
 3. **比脚本更安全**：有状态机保证的事务、崩溃可恢复、任意备份可恢复。
 4. **机器可用**：完整 CLI、稳定退出码、机器可解析的 JSON。
@@ -196,7 +196,7 @@ var engine = new SyncEngine(new SyncOptions {
 
 现有脚本把 `Get-AppxPackage` 写死在函数内部，导致**无法在未安装 Codex Desktop 的机器上测试**。拆开"定位"与"操作"之后，CI 可以用 fixture 目录跑完整链路。对应隐藏参数 `--source-bundle <path>`（仅测试与手动救援使用，不出现在帮助里）。
 
-### 4.3 "单 exe 分发"的准确边界
+### 4.3 "双独立入口分发"的准确边界
 
 **不叫自包含（self-contained）**。精确表述：
 
@@ -1085,7 +1085,7 @@ CI 只解析 `schemaVersion` + `state.verdict` + `exitCode`，不依赖任何显
     .\build\CodexPluginSync.csproj /p:Configuration=Release
 ```
 
-产出 `build\bin\Release\CodexPluginSync.exe`。构建脚本附带断言：输出目录只有 1 个 exe、exe 内无第三方程序集引用、`--version` 可运行。
+产出 `build\bin\Release\CodexPluginSync.exe` 与 `CodexPluginSync.Cli.exe`。构建脚本附带断言：输出目录无多余依赖 DLL、exe 内无第三方程序集引用、`--version` 可运行。
 
 > 实测注意（无 targeting pack 的机器）：若本机未安装 .NET Framework 4.8 **targeting pack**，内置 MSBuild 会回退到运行时目录的 4.0 程序集，抛出 `MSB3644` 警告并把 `mscorlib.dll`、`*.nlp` 复制进输出目录。csproj 已把 `mscorlib` 显式声明为 `Private=false`，并由 `AssertSingleFileOutput` 目标在构建末尾硬断言（多出文件即构建失败）。CI 上应安装 4.8 targeting pack，以消除回退。
 

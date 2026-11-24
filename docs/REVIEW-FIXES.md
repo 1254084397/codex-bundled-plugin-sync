@@ -42,7 +42,7 @@ powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1
   → 全部通过：15 个用例
 
 MSBuild build\CodexPluginSync.csproj -p:Configuration=Release
-  → CodexPluginSync.exe（单文件断言通过；仍有本机缺 4.8 targeting pack 的 MSB3644 警告）
+  → CodexPluginSync.exe（输出目录无多余依赖 DLL 断言通过；仍有本机缺 4.8 targeting pack 的 MSB3644 警告）
 
 build\bin\Release\CodexPluginSync.exe --selftest
   → SELFTEST PASS (12 cases)

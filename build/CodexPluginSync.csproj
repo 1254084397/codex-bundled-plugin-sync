@@ -34,7 +34,7 @@
     <Reference Include="System.Xml" />
     <!-- 本机没有 .NET Framework 4.8 targeting pack 时，内置 MSBuild 会回退到运行时目录的
          mscorlib 并把标记为 CopyLocal，导致输出目录里出现 mscorlib.dll 与 *.nlp。
-         显式声明为非私有引用，保证“发布目录只有 1 个 exe”（§4.3/§15）。 -->
+         显式声明为非私有引用，保证输出目录不产生私有多余依赖 DLL（§4.3/§15）。 -->
     <Reference Include="mscorlib">
       <Private>false</Private>
     </Reference>
