@@ -11,21 +11,28 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $PSScriptRoot 'CodexPluginSync.csproj'
+$cliProject = Join-Path $PSScriptRoot 'CodexPluginSync.Cli.csproj'
 $output = Join-Path $PSScriptRoot "bin\$Configuration"
 $exe = Join-Path $output 'CodexPluginSync.exe'
+$cliExe = Join-Path $output 'CodexPluginSync.Cli.exe'
 
 Push-Location $repoRoot
 try {
-    Write-Host "== 构建（$Configuration）=="
+    Write-Host "== 构建 GUI（$Configuration）=="
     & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe" $project "-p:Configuration=$Configuration" -nologo -v:m
-    if ($LASTEXITCODE -ne 0) { throw "构建失败（exit $LASTEXITCODE）" }
+    if ($LASTEXITCODE -ne 0) { throw "GUI 构建失败（exit $LASTEXITCODE）" }
     if (-not (Test-Path -LiteralPath $exe)) { throw "找不到产物：$exe" }
+
+    Write-Host "== 构建 CLI（$Configuration）=="
+    & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe" $cliProject "-p:Configuration=$Configuration" -nologo -v:m
+    if ($LASTEXITCODE -ne 0) { throw "CLI 构建失败（exit $LASTEXITCODE）" }
+    if (-not (Test-Path -LiteralPath $cliExe)) { throw "找不到产物：$cliExe" }
 
     $version = (Get-Item -LiteralPath $exe).VersionInfo.FileVersion
     if ([string]::IsNullOrWhiteSpace($version)) { $version = '1.0.0' }
 
     Write-Host '== 自检（必须全绿，否则不打包）=='
-    & $exe --selftest | Out-Host
+    & $cliExe --selftest | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "自检未通过（exit $LASTEXITCODE），拒绝打包" }
 
     $dist = Join-Path $repoRoot 'dist'
@@ -34,6 +41,7 @@ try {
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
 
     Copy-Item -LiteralPath $exe -Destination $stage
+    Copy-Item -LiteralPath $cliExe -Destination $stage
     Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination $stage
     Copy-Item -LiteralPath (Join-Path $repoRoot 'CHANGELOG.md') -Destination $stage
     Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination $stage

@@ -48,7 +48,9 @@ for /f "tokens=1*" %%A in ("!RAW_ARGS!") do (
   set "REST_ARGS=%%B"
 )
 
-set "EXE_PATH=%~dp0CodexPluginSync.exe"
+set "EXE_PATH=%~dp0CodexPluginSync.Cli.exe"
+if not exist "%EXE_PATH%" set "EXE_PATH=%~dp0build\bin\Release\CodexPluginSync.Cli.exe"
+if not exist "%EXE_PATH%" set "EXE_PATH=%~dp0CodexPluginSync.exe"
 if not exist "%EXE_PATH%" set "EXE_PATH=%~dp0build\bin\Release\CodexPluginSync.exe"
 
 if exist "%EXE_PATH%" goto :DISPATCH_EXE

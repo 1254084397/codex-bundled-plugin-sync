@@ -1,5 +1,6 @@
 using System;
 using System.Windows.Forms;
+using CodexPluginSync.Core;
 
 namespace CodexPluginSync
 {
@@ -7,12 +8,11 @@ namespace CodexPluginSync
     {
         private static int Main(string[] args)
         {
-            // 双击（无参数）→ GUI；带参数 → 命令行，行为与 M1 完全一致。
+            // 双击（无参数或显式 --gui）→ 直接运行 GUI（WinExe 目标下绝不产生控制台黑框）
             if (args == null || args.Length == 0 || IsGuiRequested(args))
             {
                 try
                 {
-                    Gui.ConsoleWindow.Hide();
                     Application.EnableVisualStyles();
                     Application.SetCompatibleTextRenderingDefault(false);
                     Application.Run(new Gui.MainForm());
@@ -26,8 +26,10 @@ namespace CodexPluginSync
                 }
             }
 
+            // 命令行模式：挂载调用方的父级终端控制台
             try
             {
+                ConsoleManager.EnsureConsoleForCli();
                 return Cli.CliRunner.Run(args);
             }
             catch (Exception ex)

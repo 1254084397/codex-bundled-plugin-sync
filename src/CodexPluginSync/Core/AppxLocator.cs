@@ -59,38 +59,30 @@ namespace CodexPluginSync.Core
 
             try
             {
-                ProcessStartInfo startInfo = new ProcessStartInfo();
-                startInfo.FileName = "powershell.exe";
-                startInfo.Arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"" +
-                    script.Replace("\"", "\\\"") + "\"";
-                startInfo.UseShellExecute = false;
-                startInfo.RedirectStandardOutput = true;
-                startInfo.RedirectStandardError = true;
-                startInfo.CreateNoWindow = true;
+                ProcessRunner.RunResult run = ProcessRunner.Run(
+                    "powershell.exe",
+                    "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"" + script.Replace("\"", "\\\"") + "\"",
+                    30000);
 
-                using (Process process = Process.Start(startInfo))
+                string stdout = run.StandardOutput;
+                if (!run.Success || string.IsNullOrEmpty(stdout) || stdout.Trim().Length == 0)
                 {
-                    string stdout = process.StandardOutput.ReadToEnd();
-                    process.WaitForExit(30000);
-                    if (string.IsNullOrEmpty(stdout) || stdout.Trim().Length == 0)
-                    {
-                        result.Found = false;
-                        result.Error = "desktop-not-found";
-                        return result;
-                    }
-                    PackageDto dto = JsonRead.FromText<PackageDto>(stdout.Trim());
-                    if (dto == null || string.IsNullOrEmpty(dto.InstallLocation))
-                    {
-                        result.Found = false;
-                        result.Error = "desktop-not-found";
-                        return result;
-                    }
-                    result.Found = true;
-                    result.Version = dto.Version;
-                    result.PackageFullName = dto.PackageFullName;
-                    result.InstallLocation = dto.InstallLocation;
+                    result.Found = false;
+                    result.Error = !string.IsNullOrEmpty(run.ErrorMessage) ? run.ErrorMessage : "desktop-not-found";
                     return result;
                 }
+                PackageDto dto = JsonRead.FromText<PackageDto>(stdout.Trim());
+                if (dto == null || string.IsNullOrEmpty(dto.InstallLocation))
+                {
+                    result.Found = false;
+                    result.Error = "desktop-not-found";
+                    return result;
+                }
+                result.Found = true;
+                result.Version = dto.Version;
+                result.PackageFullName = dto.PackageFullName;
+                result.InstallLocation = dto.InstallLocation;
+                return result;
             }
             catch (Exception ex)
             {

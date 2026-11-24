@@ -239,23 +239,11 @@ namespace CodexPluginSync.Core
 
             // 用 mklink /J 建：目标暂时不存在时（回滚场景）也能建悬挂链接，
             // 而 .NET API 在目标缺失时会直接拒绝。
-            System.Diagnostics.ProcessStartInfo startInfo = new System.Diagnostics.ProcessStartInfo();
-            startInfo.FileName = "cmd.exe";
-            startInfo.Arguments = "/c mklink /J \"" + path + "\" \"" + target + "\"";
-            startInfo.CreateNoWindow = true;
-            startInfo.UseShellExecute = false;
-            startInfo.RedirectStandardOutput = true;
-            startInfo.RedirectStandardError = true;
-
-            using (System.Diagnostics.Process process = System.Diagnostics.Process.Start(startInfo))
+            ProcessRunner.RunResult run = ProcessRunner.Run("cmd.exe", "/c mklink /J \"" + path + "\" \"" + target + "\"", 20000);
+            if (!run.Success || !Directory.Exists(path))
             {
-                process.StandardOutput.ReadToEnd();
-                process.StandardError.ReadToEnd();
-                process.WaitForExit();
-                if (process.ExitCode != 0 || !Directory.Exists(path))
-                {
-                    throw new IOException("mklink /J 失败：" + path + " -> " + target);
-                }
+                string detail = !string.IsNullOrEmpty(run.StandardError) ? run.StandardError.Trim() : run.StandardOutput.Trim();
+                throw new IOException("mklink /J 失败：" + path + " -> " + target + (string.IsNullOrEmpty(detail) ? "" : "（" + detail + "）"));
             }
         }
     }

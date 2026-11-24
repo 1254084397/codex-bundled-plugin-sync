@@ -18,6 +18,8 @@ namespace CodexPluginSync.Core
         public bool SkipProcessCheck;
         public TextWriter Out;
         public TextWriter Err;
+        public volatile bool CancelRequested;
+        public Action<string, string> OnPhaseChanged;
     }
 
     public sealed class SyncRunResult
@@ -206,9 +208,30 @@ namespace CodexPluginSync.Core
                         }
                     }
 
+                if (options.CancelRequested)
+                {
+                    for (int j = 0; j < targets.Count; j++)
+                    {
+                        try { if (Directory.Exists(targets[j].StagePath)) Directory.Delete(targets[j].StagePath, true); } catch (Exception) { }
+                    }
+                    result.Status = SyncTransaction.StatusAborted;
+                    result.Message = "用户已取消同步。";
+                    result.ExitCode = ExitCodesLocator.Ok;
+                    output.WriteLine(result.Message);
+                    return result;
+                }
+
+                Action onCommitStarted = delegate
+                {
+                    if (options.OnPhaseChanged != null)
+                    {
+                        try { options.OnPhaseChanged(JournalPhases.CommitStarted, "正在提交原子切换（此阶段不可取消）"); } catch (Exception) { }
+                    }
+                };
+
                 if (options.SkipNativeHost || string.IsNullOrEmpty(chromeVersion))
                 {
-                    transaction = SyncTransaction.Execute(paths, backupDirectory, runId, targets);
+                    transaction = SyncTransaction.Execute(paths, backupDirectory, runId, targets, null, onCommitStarted);
                 }
                 else
                 {
@@ -220,7 +243,7 @@ namespace CodexPluginSync.Core
                         {
                             throw new InvalidOperationException("Chrome native host 更新失败：" + nativeHost.Reason);
                         }
-                    });
+                    }, onCommitStarted);
                 }
                 }
                 finally

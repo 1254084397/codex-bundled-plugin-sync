@@ -42,21 +42,8 @@ namespace CodexPluginSync.Core
 
         public static bool SetEncrypted(string path, bool encrypted)
         {
-            ProcessStartInfo startInfo = new ProcessStartInfo();
-            startInfo.FileName = "cipher";
-            startInfo.Arguments = (encrypted ? "/e " : "/d ") + "\"" + path + "\"";
-            startInfo.CreateNoWindow = true;
-            startInfo.UseShellExecute = false;
-            startInfo.RedirectStandardOutput = true;
-            startInfo.RedirectStandardError = true;
-
-            using (Process process = Process.Start(startInfo))
-            {
-                process.StandardOutput.ReadToEnd();
-                process.StandardError.ReadToEnd();
-                process.WaitForExit();
-                if (process.ExitCode != 0) { return false; }
-            }
+            ProcessRunner.RunResult run = ProcessRunner.Run("cipher.exe", (encrypted ? "/e " : "/d ") + "\"" + path + "\"", 30000);
+            if (!run.Success) { return false; }
             bool? now = GetEncrypted(path);
             return now.HasValue && now.Value == encrypted;
         }

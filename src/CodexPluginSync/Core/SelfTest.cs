@@ -1446,20 +1446,8 @@ namespace CodexPluginSync.Tests
                 bool linked = false;
                 try
                 {
-                    System.Diagnostics.ProcessStartInfo startInfo = new System.Diagnostics.ProcessStartInfo();
-                    startInfo.FileName = "cmd.exe";
-                    startInfo.Arguments = "/c mklink /J \"" + latest + "\" \"" + version + "\"";
-                    startInfo.CreateNoWindow = true;
-                    startInfo.UseShellExecute = false;
-                    startInfo.RedirectStandardOutput = true;
-                    startInfo.RedirectStandardError = true;
-                    using (System.Diagnostics.Process process = System.Diagnostics.Process.Start(startInfo))
-                    {
-                        process.StandardOutput.ReadToEnd();
-                        process.StandardError.ReadToEnd();
-                        process.WaitForExit();
-                        linked = process.ExitCode == 0 && Directory.Exists(latest);
-                    }
+                    ProcessRunner.RunResult run = ProcessRunner.Run("cmd.exe", "/c mklink /J \"" + latest + "\" \"" + version + "\"", 20000);
+                    linked = run.Success && Directory.Exists(latest);
                 }
                 catch (Exception)
                 {

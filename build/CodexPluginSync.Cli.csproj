@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Release</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{9D2E1F2A-6B4C-4D3E-8F22-0B1D7C8E6F32}</ProjectGuid>
+    <!-- Exe: 控制台专用入口（CLI、计划任务、CI 与 .cmd 脚本包装器） -->
+    <OutputType>Exe</OutputType>
+    <RootNamespace>CodexPluginSync</RootNamespace>
+    <AssemblyName>CodexPluginSync.Cli</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <TargetFrameworkProfile />
+    <BaseIntermediateOutputPath>obj\Cli\</BaseIntermediateOutputPath>
+    <IntermediateOutputPath>obj\Cli\$(Configuration)\</IntermediateOutputPath>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <DebugType>none</DebugType>
+    <Optimize>true</Optimize>
+    <LangVersion>5</LangVersion>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <ApplicationManifest>..\src\CodexPluginSync\App.manifest</ApplicationManifest>
+    <WarningLevel>4</WarningLevel>
+    <DefineConstants>TRACE</DefineConstants>
+    <NoWarn>1591</NoWarn>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Runtime.Serialization" />
+    <Reference Include="System.Xml" />
+    <Reference Include="mscorlib">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\src\CodexPluginSync\**\*.cs" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <Target Name="AssertSingleFileOutput" AfterTargets="Build">
+    <ItemGroup>
+      <AllBuildOutputs Include="$(OutputPath)**\*" />
+      <ExpectedBuildOutput Include="$(OutputPath)CodexPluginSync.exe;$(OutputPath)CodexPluginSync.Cli.exe" />
+      <UnexpectedBuildOutput Include="@(AllBuildOutputs)" Exclude="@(ExpectedBuildOutput)" />
+    </ItemGroup>
+    <Error Condition="'@(UnexpectedBuildOutput)' != ''"
+           Text="发布目录产物不符合预期，实际多出：@(UnexpectedBuildOutput)" />
+  </Target>
+</Project>

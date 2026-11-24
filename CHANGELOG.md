@@ -5,6 +5,10 @@
 ### Added
 
 - WinForms desktop interface for status checks, synchronization, rollback, cleanup, and diagnostic export.
+- Pure WinExe subsystem for `CodexPluginSync.exe` — completely eliminates black console window flashing on double-click launch.
+- Dedicated `CodexPluginSync.Cli.exe` console binary and `sync-codex-bundled.cmd` wrapper for headless, task-scheduler, and CI automation.
+- Unified `ProcessRunner` layer ensuring all child processes (PowerShell, robocopy, cipher, cmd mklink) run 100% hidden with no background window popups, robust timeout termination, and robocopy exit code handling.
+- Four-section GUI layout: core environment status header, detailed component status table, action controls with cancellation support, and realtime progress/logging area.
 - Standalone `sync-codex-bundled.cmd` wrapper calling the exe directly with 2->0 exit-code mapping on `--check`. Note: no-argument invocation pauses for double-click visibility; automated/headless no-argument tasks should pass `--no-pause` or set `CODEX_NO_PAUSE=1` (explicit command arguments like `--check` or `--sync` exit without pause).
 - Single-exe release packaging through `build/package.ps1`.
 - Background GitHub Releases check in the GUI, showing the current version and a newer published version when available.

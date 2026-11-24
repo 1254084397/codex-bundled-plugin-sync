@@ -11,119 +11,223 @@ using CodexPluginSync.Core;
 namespace CodexPluginSync.Gui
 {
     /// <summary>
-    /// M3 最小可用界面：一件事一按钮，结果写在同一块日志里。
-    /// 所有写操作都要二次确认；执行期间按钮禁用，避免并发写入。
-    /// 引擎层与 CLI 完全共用（同一个 Core），界面不做任何自己的业务判断。
+    /// §M3 用户主界面：
+    /// 1. 顶部状态区：工具版本、Codex Desktop 版本、CodexHome、当前状态判定、GitHub 最新版本状态；
+    /// 2. 组件状态区：表格化清晰罗列各组件（市场规范、插件缓存、Native Host）的目标与本地状态；
+    /// 3. 主操作区：检查、同步、回滚、清理、诊断导出等，支持阶段取消（CommitStarted 后禁用）；
+    /// 4. 底部日志与进度区：实时展示执行阶段、文件进度、备份 ID、详细文本日志。
     /// </summary>
     public sealed class MainForm : Form
     {
-        private readonly Label _headline = new Label();
-        private readonly Label _detail = new Label();
-        private readonly LinkLabel _updateStatus = new LinkLabel();
-        private readonly Button _checkUpdates = new Button();
-        private readonly TextBox _log = new TextBox();
-        private readonly Button _check = new Button();
-        private readonly Button _sync = new Button();
-        private readonly Button _rollback = new Button();
-        private readonly Button _cleanup = new Button();
-        private readonly Button _diag = new Button();
-        private readonly Button _openLogs = new Button();
-        private readonly Button _openHome = new Button();
-        private readonly ProgressBar _progress = new ProgressBar();
+        // 1. 顶部状态区控件
+        private readonly Label _lblToolVersion = new Label();
+        private readonly Label _lblCodexVersion = new Label();
+        private readonly Label _lblCodexHome = new Label();
+        private readonly Label _lblStatusVerdict = new Label();
+        private readonly LinkLabel _lnkUpdateStatus = new LinkLabel();
+
+        // 2. 组件状态区控件
+        private readonly ListView _listComponents = new ListView();
+
+        // 3. 主操作区控件
+        private readonly Button _btnCheck = new Button();
+        private readonly Button _btnSync = new Button();
+        private readonly Button _btnRollback = new Button();
+        private readonly Button _btnCleanup = new Button();
+        private readonly Button _btnDiag = new Button();
+        private readonly Button _btnOpenLogs = new Button();
+        private readonly Button _btnOpenHome = new Button();
+        private readonly Button _btnCancel = new Button();
+        private readonly Button _btnCheckUpdates = new Button();
+
+        // 4. 底部日志与进度区控件
+        private readonly Label _lblBottomStatus = new Label();
+        private readonly ProgressBar _progressBar = new ProgressBar();
+        private readonly TextBox _txtLog = new TextBox();
 
         private string _codexHome;
         private string _latestReleaseUrl = UpdateChecker.RepositoryUrl + "/releases";
         private bool _busy;
+        private SyncOptions _activeSyncOptions;
 
         public MainForm()
         {
             _codexHome = CodexPaths.ResolveCodexHome(Settings.Load(null).CodexHome);
 
             Text = "Codex 插件同步 " + Cli.CliRunner.ToolVersion;
-            MinimumSize = new Size(720, 520);
-            Size = new Size(820, 600);
+            MinimumSize = new Size(780, 580);
+            Size = new Size(880, 680);
             StartPosition = FormStartPosition.CenterScreen;
-            Font = new Font("Microsoft YaHei UI", 9f);
+            Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Regular);
 
             TableLayoutPanel root = new TableLayoutPanel();
             root.Dock = DockStyle.Fill;
             root.ColumnCount = 1;
-            root.RowCount = 6;
+            root.RowCount = 5;
             root.Padding = new Padding(12);
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));             // 顶部状态区
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 150f));        // 组件状态表格
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));             // 主操作按钮区
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));        // 日志文本区
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));             // 底部进度与状态条
             Controls.Add(root);
 
-            _headline.Text = "正在读取状态…";
-            _headline.Font = new Font(Font.FontFamily, 12f, FontStyle.Bold);
-            _headline.AutoSize = true;
-            _headline.Margin = new Padding(0, 0, 0, 4);
-            root.Controls.Add(_headline, 0, 0);
+            // ==================== 1. 顶部状态区 ====================
+            GroupBox grpTopStatus = new GroupBox();
+            grpTopStatus.Text = "核心环境与状态";
+            grpTopStatus.Dock = DockStyle.Fill;
+            grpTopStatus.AutoSize = true;
+            grpTopStatus.Padding = new Padding(10, 8, 10, 10);
+            grpTopStatus.Margin = new Padding(0, 0, 0, 8);
 
-            _detail.Text = _codexHome + "  ·  当前版本 " + Cli.CliRunner.ToolVersion;
-            _detail.AutoSize = true;
-            _detail.ForeColor = SystemColors.GrayText;
-            _detail.Margin = new Padding(0, 0, 0, 10);
-            root.Controls.Add(_detail, 0, 1);
+            TableLayoutPanel topGrid = new TableLayoutPanel();
+            topGrid.Dock = DockStyle.Fill;
+            topGrid.ColumnCount = 2;
+            topGrid.RowCount = 3;
+            topGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55f));
+            topGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45f));
+            topGrid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            topGrid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            topGrid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-            _updateStatus.Text = "正在检查 GitHub 版本…";
-            _updateStatus.AutoSize = true;
-            _updateStatus.ForeColor = SystemColors.GrayText;
-            _updateStatus.LinkColor = SystemColors.HotTrack;
-            _updateStatus.Margin = new Padding(0, 0, 0, 8);
-            _updateStatus.LinkClicked += delegate
+            _lblStatusVerdict.Text = "系统状态：正在检测…";
+            _lblStatusVerdict.Font = new Font(Font.FontFamily, 10f, FontStyle.Bold);
+            _lblStatusVerdict.AutoSize = true;
+            _lblStatusVerdict.Margin = new Padding(0, 2, 0, 4);
+
+            _lblToolVersion.Text = "当前工具版本：" + Cli.CliRunner.ToolVersion;
+            _lblToolVersion.AutoSize = true;
+            _lblToolVersion.ForeColor = SystemColors.ControlText;
+
+            _lblCodexVersion.Text = "Codex Desktop：正在读取…";
+            _lblCodexVersion.AutoSize = true;
+            _lblCodexVersion.ForeColor = SystemColors.ControlText;
+
+            _lblCodexHome.Text = "CodexHome：" + _codexHome;
+            _lblCodexHome.AutoSize = true;
+            _lblCodexHome.ForeColor = SystemColors.GrayText;
+
+            _lnkUpdateStatus.Text = "正在检查 GitHub Releases 版本…";
+            _lnkUpdateStatus.AutoSize = true;
+            _lnkUpdateStatus.LinkColor = SystemColors.HotTrack;
+            _lnkUpdateStatus.LinkClicked += delegate
             {
                 try
                 {
-                    Process.Start(!string.IsNullOrEmpty(_latestReleaseUrl) ? _latestReleaseUrl : UpdateChecker.RepositoryUrl + "/releases");
+                    Process.Start(new ProcessStartInfo(!string.IsNullOrEmpty(_latestReleaseUrl) ? _latestReleaseUrl : UpdateChecker.RepositoryUrl + "/releases")
+                    {
+                        UseShellExecute = true
+                    });
                 }
                 catch (Exception) { }
             };
-            root.Controls.Add(_updateStatus, 0, 2);
 
-            FlowLayoutPanel buttons = new FlowLayoutPanel();
-            buttons.AutoSize = true;
-            buttons.WrapContents = true;
-            buttons.Margin = new Padding(0, 0, 0, 8);
-            root.Controls.Add(buttons, 0, 3);
+            topGrid.Controls.Add(_lblStatusVerdict, 0, 0);
+            topGrid.Controls.Add(_lnkUpdateStatus, 1, 0);
+            topGrid.Controls.Add(_lblCodexVersion, 0, 1);
+            topGrid.Controls.Add(_lblToolVersion, 1, 1);
+            topGrid.Controls.Add(_lblCodexHome, 0, 2);
+            topGrid.SetColumnSpan(_lblCodexHome, 2);
 
-            ConfigureButton(_check, "检查", delegate { RunCheck(); });
-            ConfigureButton(_sync, "同步", delegate { RunWithConfirm("同步会替换 Codex 的内置插件目录（先自动备份，可回滚）。继续？", RunSync); });
-            ConfigureButton(_rollback, "回滚…", delegate { RunRollback(); });
-            ConfigureButton(_cleanup, "清理", delegate { RunWithConfirm("清理会删除过期的 stage、旧备份与旧日志（当前操作引用的内容不会删）。继续？", RunCleanup); });
-            ConfigureButton(_diag, "导出诊断", delegate { RunDiag(); });
-            ConfigureButton(_openLogs, "打开日志", delegate { OpenFolder(CodexPaths.ToolLogDirectory); });
-            ConfigureButton(_openHome, "打开 CodexHome", delegate { OpenFolder(_codexHome); });
-            ConfigureButton(_checkUpdates, "检查版本", delegate { RefreshUpdateStatus(); });
+            grpTopStatus.Controls.Add(topGrid);
+            root.Controls.Add(grpTopStatus, 0, 0);
 
-            buttons.Controls.Add(_check);
-            buttons.Controls.Add(_sync);
-            buttons.Controls.Add(_rollback);
-            buttons.Controls.Add(_cleanup);
-            buttons.Controls.Add(_diag);
-            buttons.Controls.Add(_openLogs);
-            buttons.Controls.Add(_openHome);
-            buttons.Controls.Add(_checkUpdates);
+            // ==================== 2. 组件状态区 ====================
+            _listComponents.Dock = DockStyle.Fill;
+            _listComponents.View = View.Details;
+            _listComponents.FullRowSelect = true;
+            _listComponents.GridLines = true;
+            _listComponents.HideSelection = false;
+            _listComponents.MultiSelect = false;
+            _listComponents.HeaderStyle = ColumnHeaderStyle.Nonclickable;
+            _listComponents.Columns.Add("组件模块", 150);
+            _listComponents.Columns.Add("目标版本", 130);
+            _listComponents.Columns.Add("本地状态", 130);
+            _listComponents.Columns.Add("判定", 90);
+            _listComponents.Columns.Add("详细说明", 300);
+            _listComponents.Margin = new Padding(0, 0, 0, 8);
+            root.Controls.Add(_listComponents, 0, 1);
 
-            _log.Multiline = true;
-            _log.ReadOnly = true;
-            _log.ScrollBars = ScrollBars.Vertical;
-            _log.Dock = DockStyle.Fill;
-            _log.BackColor = SystemColors.Window;
-            _log.Font = new Font("Consolas", 9f);
-            root.Controls.Add(_log, 0, 4);
+            // ==================== 3. 主操作区 ====================
+            FlowLayoutPanel actionPanel = new FlowLayoutPanel();
+            actionPanel.Dock = DockStyle.Fill;
+            actionPanel.AutoSize = true;
+            actionPanel.WrapContents = true;
+            actionPanel.Margin = new Padding(0, 0, 0, 8);
 
-            _progress.Style = ProgressBarStyle.Marquee;
-            _progress.Visible = false;
-            _progress.Dock = DockStyle.Fill;
-            _progress.Height = 6;
-            root.Controls.Add(_progress, 0, 5);
+            ConfigureButton(_btnCheck, "检查状态", delegate { RunCheck(); });
+            ConfigureButton(_btnSync, "立即同步", delegate { RunWithConfirm("同步会先自动创建备份，并将内置插件原子写入本地目录。\n继续执行？", RunSync); });
+            ConfigureButton(_btnRollback, "回滚备份…", delegate { RunRollback(); });
+            ConfigureButton(_btnCleanup, "清理旧备份", delegate { RunWithConfirm("清理会删除过期的 stage 暂存、过期备份与旧日志（活跃操作引用的内容会被保留）。\n继续执行？", RunCleanup); });
+            ConfigureButton(_btnDiag, "导出诊断包", delegate { RunDiag(); });
+            ConfigureButton(_btnOpenLogs, "打开日志", delegate { OpenFolder(CodexPaths.ToolLogDirectory); });
+            ConfigureButton(_btnOpenHome, "打开 CodexHome", delegate { OpenFolder(_codexHome); });
+            ConfigureButton(_btnCheckUpdates, "检查更新", delegate { RefreshUpdateStatus(); });
 
-            Shown += delegate { RefreshStatus(); RefreshUpdateStatus(); };
+            _btnCancel.Text = "取消同步";
+            _btnCancel.AutoSize = true;
+            _btnCancel.Padding = new Padding(8, 2, 8, 2);
+            _btnCancel.Visible = false;
+            _btnCancel.ForeColor = Color.DarkRed;
+            _btnCancel.Click += delegate
+            {
+                if (_activeSyncOptions != null)
+                {
+                    _activeSyncOptions.CancelRequested = true;
+                    _lblBottomStatus.Text = "正在请求取消…";
+                    _btnCancel.Enabled = false;
+                }
+            };
+
+            actionPanel.Controls.Add(_btnCheck);
+            actionPanel.Controls.Add(_btnSync);
+            actionPanel.Controls.Add(_btnRollback);
+            actionPanel.Controls.Add(_btnCleanup);
+            actionPanel.Controls.Add(_btnDiag);
+            actionPanel.Controls.Add(_btnOpenLogs);
+            actionPanel.Controls.Add(_btnOpenHome);
+            actionPanel.Controls.Add(_btnCheckUpdates);
+            actionPanel.Controls.Add(_btnCancel);
+
+            root.Controls.Add(actionPanel, 0, 2);
+
+            // ==================== 4. 底部日志与状态区 ====================
+            _txtLog.Multiline = true;
+            _txtLog.ReadOnly = true;
+            _txtLog.ScrollBars = ScrollBars.Vertical;
+            _txtLog.Dock = DockStyle.Fill;
+            _txtLog.BackColor = Color.FromArgb(250, 250, 250);
+            _txtLog.Font = new Font("Consolas", 9f);
+            _txtLog.Margin = new Padding(0, 0, 0, 6);
+            root.Controls.Add(_txtLog, 0, 3);
+
+            TableLayoutPanel bottomBar = new TableLayoutPanel();
+            bottomBar.Dock = DockStyle.Fill;
+            bottomBar.ColumnCount = 2;
+            bottomBar.RowCount = 1;
+            bottomBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            bottomBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180f));
+
+            _lblBottomStatus.Text = "当前阶段：就绪";
+            _lblBottomStatus.AutoSize = true;
+            _lblBottomStatus.Anchor = AnchorStyles.Left;
+            _lblBottomStatus.ForeColor = SystemColors.ControlDarkDark;
+
+            _progressBar.Style = ProgressBarStyle.Marquee;
+            _progressBar.Visible = false;
+            _progressBar.Dock = DockStyle.Fill;
+            _progressBar.Height = 16;
+            _progressBar.Anchor = AnchorStyles.Right;
+
+            bottomBar.Controls.Add(_lblBottomStatus, 0, 0);
+            bottomBar.Controls.Add(_progressBar, 1, 0);
+            root.Controls.Add(bottomBar, 0, 4);
+
+            Shown += delegate
+            {
+                RefreshStatus();
+                RefreshUpdateStatus();
+            };
         }
 
         private void ConfigureButton(Button button, string text, EventHandler handler)
@@ -141,29 +245,23 @@ namespace CodexPluginSync.Gui
         private void AppendLog(string line)
         {
             if (string.IsNullOrEmpty(line)) { return; }
-            if (_log.TextLength == 0)
+            if (_txtLog.TextLength == 0)
             {
-                _log.Text = line;
+                _txtLog.Text = line;
             }
             else
             {
-                _log.AppendText(Environment.NewLine + line);
+                _txtLog.AppendText(Environment.NewLine + line);
             }
         }
 
-        /// <summary>所有耗时动作都在后台线程跑，日志回到 UI 线程写。</summary>
-        private void RunAsync(string headline, Action<TextWriter> work)
-        {
-            RunAsync(headline, work, true);
-        }
-
-        private void RunAsync(string headline, Action<TextWriter> work, bool refreshAfterwards)
+        private void RunAsync(string headline, Action<TextWriter> work, bool refreshAfterwards = true)
         {
             if (_busy) { return; }
             _busy = true;
             SetButtonsEnabled(false);
-            _headline.Text = headline;
-            _progress.Visible = true;
+            _lblBottomStatus.Text = "当前阶段：" + headline;
+            _progressBar.Visible = true;
 
             Thread thread = new Thread(delegate()
             {
@@ -194,16 +292,13 @@ namespace CodexPluginSync.Gui
                             for (int i = 0; i < lines.Length; i++) { AppendLog(lines[i]); }
                             TrimLog();
                             _busy = false;
-                            _progress.Visible = false;
+                            _progressBar.Visible = false;
+                            _btnCancel.Visible = false;
                             SetButtonsEnabled(true);
-                            // 刷新自己不能再触发刷新，否则会无限循环。
                             if (refreshAfterwards) { RefreshStatus(); }
                         });
                     }
-                    catch (Exception)
-                    {
-                        // 窗口已关闭：忽略
-                    }
+                    catch (Exception) { }
                 }
             });
             thread.IsBackground = true;
@@ -213,31 +308,31 @@ namespace CodexPluginSync.Gui
         private void TrimLog()
         {
             const int maxChars = 200000;
-            if (_log.TextLength <= maxChars) { return; }
-            _log.Text = "…（已截断较早输出）" + Environment.NewLine +
-                _log.Text.Substring(_log.TextLength - maxChars / 2);
-            _log.SelectionStart = _log.TextLength;
-            _log.ScrollToCaret();
+            if (_txtLog.TextLength <= maxChars) { return; }
+            _txtLog.Text = "…（已截断较早输出）" + Environment.NewLine +
+                _txtLog.Text.Substring(_txtLog.TextLength - maxChars / 2);
+            _txtLog.SelectionStart = _txtLog.TextLength;
+            _txtLog.ScrollToCaret();
         }
 
         private void SetButtonsEnabled(bool enabled)
         {
-            _check.Enabled = enabled;
-            _sync.Enabled = enabled;
-            _rollback.Enabled = enabled;
-            _cleanup.Enabled = enabled;
-            _diag.Enabled = enabled;
-            _openLogs.Enabled = enabled;
-            _openHome.Enabled = enabled;
-            _checkUpdates.Enabled = enabled;
+            _btnCheck.Enabled = enabled;
+            _btnSync.Enabled = enabled;
+            _btnRollback.Enabled = enabled;
+            _btnCleanup.Enabled = enabled;
+            _btnDiag.Enabled = enabled;
+            _btnOpenLogs.Enabled = enabled;
+            _btnOpenHome.Enabled = enabled;
+            _btnCheckUpdates.Enabled = enabled;
             Cursor = enabled ? Cursors.Default : Cursors.WaitCursor;
         }
 
         private void RefreshUpdateStatus()
         {
-            _updateStatus.Text = "正在检查 GitHub 版本…";
-            _updateStatus.LinkColor = SystemColors.GrayText;
-            Thread thread = new Thread(new ThreadStart(delegate
+            _lnkUpdateStatus.Text = "正在检查 GitHub Releases 版本…";
+            _lnkUpdateStatus.LinkColor = SystemColors.GrayText;
+            Thread thread = new Thread(delegate()
             {
                 UpdateInfo update = UpdateChecker.Check(Cli.CliRunner.ToolVersion);
                 if (IsHandleCreated && !IsDisposed)
@@ -252,31 +347,31 @@ namespace CodexPluginSync.Gui
                             }
                             if (!update.Succeeded)
                             {
-                                _updateStatus.Text = (update.Message ?? "无法取得版本信息") + " · 点击访问 Releases";
-                                _updateStatus.LinkColor = SystemColors.HotTrack;
+                                _lnkUpdateStatus.Text = (update.Message ?? "暂无已发布的 Release 版本") + " · 点击访问 Releases";
+                                _lnkUpdateStatus.LinkColor = SystemColors.HotTrack;
                             }
                             else if (update.IsNewer)
                             {
-                                _updateStatus.Text = "发现新版本 " + update.LatestVersion + "（当前 " + update.CurrentVersion + "）· 点击前往 GitHub Releases 查看更新说明";
-                                _updateStatus.LinkColor = Color.DarkOrange;
+                                _lnkUpdateStatus.Text = "发现新版本 " + update.LatestVersion + "（当前 " + update.CurrentVersion + "）· 点击前往 GitHub Releases 查看更新";
+                                _lnkUpdateStatus.LinkColor = Color.DarkOrange;
                             }
                             else
                             {
-                                _updateStatus.Text = "当前版本 " + update.CurrentVersion + " 已是最新 · 点击访问 Releases";
-                                _updateStatus.LinkColor = Color.DarkGreen;
+                                _lnkUpdateStatus.Text = "当前版本 " + update.CurrentVersion + " 已是最新 · 点击访问 Releases";
+                                _lnkUpdateStatus.LinkColor = Color.DarkGreen;
                             }
                         });
                     }
                     catch (Exception) { }
                 }
-            }));
+            });
             thread.IsBackground = true;
             thread.Start();
         }
 
         private void RunWithConfirm(string question, Action run)
         {
-            DialogResult answer = MessageBox.Show(this, question, "确认", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning);
+            DialogResult answer = MessageBox.Show(this, question, "操作确认", MessageBoxButtons.OKCancel, MessageBoxIcon.Information);
             if (answer == DialogResult.OK)
             {
                 run();
@@ -285,7 +380,7 @@ namespace CodexPluginSync.Gui
 
         private void RefreshStatus()
         {
-            RunAsync("正在读取状态…", delegate(TextWriter writer)
+            RunAsync("读取状态", delegate(TextWriter writer)
             {
                 Settings settings = Settings.Load(null);
                 CheckOptions options = new CheckOptions();
@@ -297,54 +392,13 @@ namespace CodexPluginSync.Gui
                 CheckOutcome outcome = engine.Execute();
                 Snapshot snapshot = outcome.Snapshot;
 
-                writer.WriteLine("CodexHome：" + snapshot.CodexHome);
-                if (snapshot.Desktop != null && snapshot.Desktop.Found)
-                {
-                    writer.WriteLine("Codex Desktop：" + snapshot.Desktop.Version);
-                }
-                for (int i = 0; i < snapshot.Components.Count; i++)
-                {
-                    ComponentInfo component = snapshot.Components[i];
-                    if (component.Type != "cache") { continue; }
-                    writer.WriteLine("  " + component.Name + "：" + component.Actual +
-                        (component.State == ComponentStates.Ok ? "（最新）" : "（" + component.State + "）"));
-                }
-                if (snapshot.NativeHost != null && snapshot.NativeHost.Chrome != null)
-                {
-                    writer.WriteLine("Chrome native host：" + snapshot.NativeHost.Chrome.State);
-                }
-                if (snapshot.Efs != null)
-                {
-                    writer.WriteLine("EFS：" + snapshot.Efs.StagingParentEncrypted);
-                }
-                if (snapshot.Journal != null)
-                {
-                    writer.WriteLine("未收尾操作：" + snapshot.Journal.Phase + "（" + snapshot.Journal.OperationId + "）");
-                }
-                if (snapshot.Backups.Newest != null)
-                {
-                    writer.WriteLine("最新备份：" + snapshot.Backups.Newest.BackupId + "（" + snapshot.Backups.Newest.Status + "）");
-                }
-                if (snapshot.LockingProcesses.Count > 0)
-                {
-                    StringBuilder sb = new StringBuilder();
-                    for (int i = 0; i < snapshot.LockingProcesses.Count; i++)
-                    {
-                        if (i > 0) { sb.Append("、"); }
-                        sb.Append(snapshot.LockingProcesses[i].Name);
-                    }
-                    writer.WriteLine("⚠ 正在运行、会占用插件目录：" + sb.ToString() + "（同步前请先退出）");
-                }
-                writer.WriteLine("判定：" + VerdictText(snapshot.Verdict) + "｜退出码 " + outcome.ExitCode);
-                if (outcome.ErrorMessage != null) { writer.WriteLine("错误：" + outcome.ErrorMessage); }
-
                 if (IsHandleCreated && !IsDisposed)
                 {
                     try
                     {
                         BeginInvoke((MethodInvoker)delegate
                         {
-                            _headline.Text = HeadlineText(snapshot.Verdict);
+                            UpdateUIFromSnapshot(snapshot, outcome);
                         });
                     }
                     catch (Exception) { }
@@ -352,12 +406,143 @@ namespace CodexPluginSync.Gui
             }, false);
         }
 
+        private void UpdateUIFromSnapshot(Snapshot snapshot, CheckOutcome outcome)
+        {
+            // 1. 顶部状态
+            _lblCodexHome.Text = "CodexHome：" + snapshot.CodexHome;
+            if (snapshot.Desktop != null && snapshot.Desktop.Found)
+            {
+                _lblCodexVersion.Text = "Codex Desktop：" + snapshot.Desktop.Version;
+                _lblCodexVersion.ForeColor = Color.DarkGreen;
+            }
+            else
+            {
+                _lblCodexVersion.Text = "Codex Desktop：未检测到已安装的 Codex Desktop";
+                _lblCodexVersion.ForeColor = Color.Crimson;
+            }
+
+            _lblStatusVerdict.Text = "系统状态：" + HeadlineText(snapshot.Verdict);
+            if (snapshot.Verdict == Verdicts.Ok)
+            {
+                _lblStatusVerdict.ForeColor = Color.DarkGreen;
+            }
+            else if (snapshot.Verdict == Verdicts.UpdateNeeded)
+            {
+                _lblStatusVerdict.ForeColor = Color.DarkOrange;
+            }
+            else
+            {
+                _lblStatusVerdict.ForeColor = Color.Crimson;
+            }
+
+            // 2. 组件列表
+            _listComponents.BeginUpdate();
+            _listComponents.Items.Clear();
+
+            // 市场清单
+            if (snapshot.Marketplace != null)
+            {
+                ListViewItem item = new ListViewItem("Marketplace (市场包)");
+                item.SubItems.Add("内置包规格");
+                item.SubItems.Add(snapshot.Marketplace.Exists ? "已部署" : "未部署");
+                if (snapshot.Marketplace.NeedsUpdate == true)
+                {
+                    item.SubItems.Add("需要同步");
+                    item.SubItems.Add("openai-bundled 市场清单落后或缺失");
+                    item.ForeColor = Color.DarkOrange;
+                }
+                else if (snapshot.Marketplace.Exists)
+                {
+                    item.SubItems.Add("最新");
+                    item.SubItems.Add("openai-bundled 市场清单一致");
+                    item.ForeColor = Color.DarkGreen;
+                }
+                else
+                {
+                    item.SubItems.Add("缺失");
+                    item.SubItems.Add("尚未部署市场清单");
+                    item.ForeColor = Color.Crimson;
+                }
+                _listComponents.Items.Add(item);
+            }
+
+            // 受管缓存组件
+            if (snapshot.Components != null)
+            {
+                for (int i = 0; i < snapshot.Components.Count; i++)
+                {
+                    ComponentInfo c = snapshot.Components[i];
+                    ListViewItem item = new ListViewItem(c.Name + " (缓存)");
+                    item.SubItems.Add(!string.IsNullOrEmpty(c.Expected) ? c.Expected : "-");
+                    item.SubItems.Add(!string.IsNullOrEmpty(c.Actual) ? c.Actual : "缺失");
+                    if (c.State == ComponentStates.Ok)
+                    {
+                        item.SubItems.Add("最新");
+                        item.SubItems.Add("版本与内置包完全匹配");
+                        item.ForeColor = Color.DarkGreen;
+                    }
+                    else if (c.State == ComponentStates.Missing)
+                    {
+                        item.SubItems.Add("缺失");
+                        item.SubItems.Add("本地缓存目录不存在");
+                        item.ForeColor = Color.Crimson;
+                    }
+                    else
+                    {
+                        item.SubItems.Add("落后");
+                        item.SubItems.Add("本地版本为 " + c.Actual + "，需同步至 " + c.Expected);
+                        item.ForeColor = Color.DarkOrange;
+                    }
+                    _listComponents.Items.Add(item);
+                }
+            }
+
+            // Chrome Native Host
+            if (snapshot.NativeHost != null && snapshot.NativeHost.Chrome != null)
+            {
+                string state = snapshot.NativeHost.Chrome.State;
+                bool ok = string.Equals(state, "ok", StringComparison.OrdinalIgnoreCase);
+                ListViewItem item = new ListViewItem("Chrome Native Host");
+                item.SubItems.Add("latest junction");
+                item.SubItems.Add(ok ? "已连接" : state);
+                item.SubItems.Add(ok ? "正常" : "待处理");
+                item.SubItems.Add(snapshot.NativeHost.Chrome.Detail ?? (ok ? "Native host 符号链接有效" : "需要重新建立链接"));
+                item.ForeColor = ok ? Color.DarkGreen : Color.Crimson;
+                _listComponents.Items.Add(item);
+            }
+
+            _listComponents.EndUpdate();
+
+            // 4. 底部状态
+            StringBuilder sb = new StringBuilder();
+            sb.Append("当前状态：").Append(VerdictText(snapshot.Verdict));
+            if (snapshot.Backups != null)
+            {
+                sb.Append(" | 可用备份数：").Append(snapshot.Backups.Count);
+                if (snapshot.Backups.Newest != null)
+                {
+                    sb.Append("（最新：").Append(snapshot.Backups.Newest.BackupId).Append("）");
+                }
+            }
+            if (snapshot.LockingProcesses.Count > 0)
+            {
+                sb.Append(" | ⚠ 发现占用进程：");
+                for (int i = 0; i < snapshot.LockingProcesses.Count; i++)
+                {
+                    if (i > 0) sb.Append("、");
+                    sb.Append(snapshot.LockingProcesses[i].Name);
+                }
+                sb.Append("（同步前请先关闭）");
+            }
+            _lblBottomStatus.Text = sb.ToString();
+        }
+
         private static string HeadlineText(string verdict)
         {
-            if (verdict == Verdicts.Ok) { return "状态：正常，无需更新"; }
-            if (verdict == Verdicts.UpdateNeeded) { return "状态：需要同步"; }
-            if (verdict == Verdicts.Blocked) { return "状态：被阻塞（有正在运行的程序或未收尾操作）"; }
-            return "状态：检查失败（见下方日志）";
+            if (verdict == Verdicts.Ok) { return "正常（所有组件已是最新）"; }
+            if (verdict == Verdicts.UpdateNeeded) { return "需要同步（发现内置组件更新）"; }
+            if (verdict == Verdicts.Blocked) { return "被阻塞（检测到进程占用或未完成的事务）"; }
+            return "检查失败（无法获取完整状态）";
         }
 
         private static string VerdictText(string verdict)
@@ -370,7 +555,7 @@ namespace CodexPluginSync.Gui
 
         private void RunCheck()
         {
-            RunAsync("正在检查…", delegate(TextWriter writer)
+            RunAsync("正在检查组件状态…", delegate(TextWriter writer)
             {
                 Settings settings = Settings.Load(null);
                 CheckOptions options = new CheckOptions();
@@ -379,32 +564,58 @@ namespace CodexPluginSync.Gui
                 options.ExtraLockingProcesses = settings.ExtraLockingProcesses;
                 CheckEngine engine = new CheckEngine(options, null);
                 CheckOutcome outcome = engine.Execute();
-                writer.WriteLine("判定：" + VerdictText(outcome.Snapshot.Verdict) + "（退出码 " + outcome.ExitCode + "）");
-                if (outcome.ErrorMessage != null) { writer.WriteLine("错误：" + outcome.ErrorMessage); }
-                for (int i = 0; i < outcome.Warnings.Count; i++) { writer.WriteLine("警告：" + outcome.Warnings[i]); }
+                writer.WriteLine("检查结果判定：" + VerdictText(outcome.Snapshot.Verdict) + "（退出码 " + outcome.ExitCode + "）");
+                if (outcome.ErrorMessage != null) { writer.WriteLine("错误说明：" + outcome.ErrorMessage); }
+                for (int i = 0; i < outcome.Warnings.Count; i++) { writer.WriteLine("警告项：" + outcome.Warnings[i]); }
             });
         }
 
         private void RunSync()
         {
-            RunAsync("正在同步（先备份，再替换）…", delegate(TextWriter writer)
+            _activeSyncOptions = new SyncOptions();
+            _activeSyncOptions.CodexHome = _codexHome;
+
+            _btnCancel.Visible = true;
+            _btnCancel.Enabled = true;
+
+            _activeSyncOptions.OnPhaseChanged = delegate(string phase, string detail)
             {
-                SyncOptions options = new SyncOptions();
-                options.CodexHome = _codexHome;
-                options.Out = writer;
-                options.Err = writer;
-                SyncRunResult result = SyncEngine.Run(options);
-                writer.WriteLine("结果：" + (result.Status ?? "(未知)") + "｜退出码 " + result.ExitCode);
+                if (IsHandleCreated && !IsDisposed)
+                {
+                    try
+                    {
+                        BeginInvoke((MethodInvoker)delegate
+                        {
+                            _lblBottomStatus.Text = "当前阶段：" + detail;
+                            if (phase == JournalPhases.CommitStarted)
+                            {
+                                _btnCancel.Enabled = false; // 进入原子提交，禁止取消
+                            }
+                        });
+                    }
+                    catch (Exception) { }
+                }
+            };
+
+            RunAsync("正在同步组件（先自动备份，再原子切换）…", delegate(TextWriter writer)
+            {
+                _activeSyncOptions.Out = writer;
+                _activeSyncOptions.Err = writer;
+                SyncRunResult result = SyncEngine.Run(_activeSyncOptions);
+                writer.WriteLine("同步结果：" + (result.Status ?? "(未知)") + "｜退出码 " + result.ExitCode);
                 if (!string.IsNullOrEmpty(result.Message)) { writer.WriteLine(result.Message); }
+                if (result.ExitCode == ExitCodesLocator.Ok && result.Status != "no-op")
+                {
+                    writer.WriteLine("提示：同步已成功完成，建议重启 Codex Desktop 应用程序以加载最新插件。");
+                }
             });
         }
 
         private void RunRollback()
         {
-            RunAsync("读取备份列表…", delegate(TextWriter writer)
+            RunAsync("读取历史备份列表…", delegate(TextWriter writer)
             {
                 BackupsInfo info = BackupStore.Enumerate(new CodexPaths(_codexHome).BackupsRoot);
-
                 List<string> candidates = new List<string>();
                 string root = new CodexPaths(_codexHome).BackupsRoot;
                 if (Directory.Exists(root))
@@ -425,23 +636,36 @@ namespace CodexPluginSync.Gui
                 }
                 if (candidates.Count == 0 && info.Newest == null)
                 {
-                    writer.WriteLine("没有可回滚的备份。");
+                    writer.WriteLine("当前没有可用的历史备份。");
                     return;
                 }
-                SelectedBackup selection = PromptBackup(candidates);
+
+                SelectedBackup selection = null;
+                if (IsHandleCreated && !IsDisposed)
+                {
+                    Invoke((MethodInvoker)delegate
+                    {
+                        selection = PromptBackup(candidates);
+                    });
+                }
+
                 if (selection == null)
                 {
                     writer.WriteLine("已取消回滚。");
                     return;
                 }
-                writer.WriteLine("使用备份：" + (selection.BackupId ?? "最新 status=complete"));
+                writer.WriteLine("正在回滚至备份：" + (selection.BackupId ?? "最新 status=complete"));
                 RollbackOptions options = new RollbackOptions();
                 options.CodexHome = _codexHome;
                 options.BackupId = selection.BackupId;
                 options.Out = writer;
                 options.Err = writer;
                 SyncRunResult result = RollbackEngine.Run(options);
-                writer.WriteLine("结果：" + (result.Status ?? "(未知)") + "｜退出码 " + result.ExitCode);
+                writer.WriteLine("回滚结果：" + (result.Status ?? "(未知)") + "｜退出码 " + result.ExitCode);
+                if (result.ExitCode == ExitCodesLocator.Ok)
+                {
+                    writer.WriteLine("提示：回滚已成功完成，请重启 Codex Desktop 应用程序。");
+                }
             });
         }
 
@@ -455,15 +679,18 @@ namespace CodexPluginSync.Gui
             SelectedBackup selection = null;
             using (Form dialog = new Form())
             {
-                dialog.Text = "选择要回滚到的备份";
+                dialog.Text = "选择回滚快照备份";
                 dialog.StartPosition = FormStartPosition.CenterParent;
-                dialog.Width = 460;
-                dialog.Height = 260;
+                dialog.Width = 480;
+                dialog.Height = 280;
                 dialog.Font = Font;
+                dialog.FormBorderStyle = FormBorderStyle.FixedDialog;
+                dialog.MaximizeBox = false;
+                dialog.MinimizeBox = false;
 
                 ListBox list = new ListBox();
                 list.Dock = DockStyle.Fill;
-                list.Items.Add("（最新 status=complete）");
+                list.Items.Add("（默认：最新 complete 备份）");
                 for (int i = 0; i < candidates.Count; i++) { list.Items.Add(candidates[i]); }
                 list.SelectedIndex = 0;
 
@@ -471,16 +698,17 @@ namespace CodexPluginSync.Gui
                 panel.Dock = DockStyle.Bottom;
                 panel.FlowDirection = FlowDirection.RightToLeft;
                 panel.Height = 44;
+                panel.Padding = new Padding(0, 6, 8, 0);
 
                 Button ok = new Button();
-                ok.Text = "回滚";
+                ok.Text = "确认回滚";
                 ok.DialogResult = DialogResult.OK;
-                ok.Width = 84;
+                ok.Width = 90;
 
                 Button cancel = new Button();
                 cancel.Text = "取消";
                 cancel.DialogResult = DialogResult.Cancel;
-                cancel.Width = 84;
+                cancel.Width = 80;
 
                 panel.Controls.Add(ok);
                 panel.Controls.Add(cancel);
@@ -509,29 +737,29 @@ namespace CodexPluginSync.Gui
 
         private void RunCleanup()
         {
-            RunAsync("正在清理…", delegate(TextWriter writer)
+            RunAsync("正在清理旧备份与暂存目录…", delegate(TextWriter writer)
             {
                 CleanupOptions options = new CleanupOptions();
                 options.CodexHome = _codexHome;
                 options.Out = writer;
                 options.Err = writer;
                 SyncRunResult result = CleanupEngine.Run(options);
-                writer.WriteLine("结果：" + (result.Status ?? "(未知)") + "｜退出码 " + result.ExitCode);
+                writer.WriteLine("清理结果：" + (result.Status ?? "(未知)") + "｜退出码 " + result.ExitCode);
             });
         }
 
         private void RunDiag()
         {
             SaveFileDialog dialog = new SaveFileDialog();
-            dialog.Title = "保存诊断包";
-            dialog.Filter = "Zip 包 (*.zip)|*.zip";
+            dialog.Title = "保存诊断信息包";
+            dialog.Filter = "Zip 压缩包 (*.zip)|*.zip";
             dialog.FileName = "CodexPluginSync-diag-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".zip";
             if (dialog.ShowDialog(this) != DialogResult.OK)
             {
                 return;
             }
             string path = dialog.FileName;
-            RunAsync("正在导出诊断包…", delegate(TextWriter writer)
+            RunAsync("正在导出诊断数据包…", delegate(TextWriter writer)
             {
                 DiagOptions options = new DiagOptions();
                 options.CodexHome = _codexHome;
@@ -539,8 +767,8 @@ namespace CodexPluginSync.Gui
                 options.Out = writer;
                 options.Err = writer;
                 SyncRunResult result = DiagExporter.Run(options);
-                writer.WriteLine("结果：" + (result.Status ?? "(未知)") + "｜退出码 " + result.ExitCode);
-                writer.WriteLine("提示：默认已脱敏；提交 issue 时附带这个 zip 即可。");
+                writer.WriteLine("导出结果：" + (result.Status ?? "(未知)") + "｜退出码 " + result.ExitCode);
+                writer.WriteLine("安全提示：诊断包已完成脱敏处理，提交 Issue 时附带此文件即可。");
             });
         }
 
@@ -550,10 +778,10 @@ namespace CodexPluginSync.Gui
             {
                 if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
                 {
-                    MessageBox.Show(this, "目录不存在：" + path, "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show(this, "指定的目录尚不存在：" + path, "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
-                System.Diagnostics.Process.Start("explorer.exe", "\"" + path + "\"");
+                Process.Start(new ProcessStartInfo("explorer.exe", "\"" + path + "\"") { UseShellExecute = true });
             }
             catch (Exception ex)
             {

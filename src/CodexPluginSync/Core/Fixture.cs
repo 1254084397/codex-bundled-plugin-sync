@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using CodexPluginSync.Core;
 
 namespace CodexPluginSync.Tests
 {
@@ -118,18 +119,8 @@ namespace CodexPluginSync.Tests
         {
             try
             {
-                System.Diagnostics.ProcessStartInfo startInfo = new System.Diagnostics.ProcessStartInfo();
-                startInfo.FileName = "cmd.exe";
-                startInfo.Arguments = "/c mklink /J \"" + linkPath + "\" \"" + targetPath + "\"";
-                startInfo.UseShellExecute = false;
-                startInfo.CreateNoWindow = true;
-                startInfo.RedirectStandardOutput = true;
-                startInfo.RedirectStandardError = true;
-                using (System.Diagnostics.Process process = System.Diagnostics.Process.Start(startInfo))
-                {
-                    process.WaitForExit(20000);
-                    return Directory.Exists(linkPath);
-                }
+                ProcessRunner.RunResult run = ProcessRunner.Run("cmd.exe", "/c mklink /J \"" + linkPath + "\" \"" + targetPath + "\"", 20000);
+                return run.Success && Directory.Exists(linkPath);
             }
             catch (Exception)
             {

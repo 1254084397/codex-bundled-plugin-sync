@@ -19,13 +19,14 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Build CodexPluginSync (Release)
+      - name: Build CodexPluginSync GUI & CLI (Release)
         run: |
           msbuild build/CodexPluginSync.csproj -p:Configuration=Release -nologo -v:m
+          msbuild build/CodexPluginSync.Cli.csproj -p:Configuration=Release -nologo -v:m
 
       - name: Run Core Self-Test Suite (27 Cases)
         run: |
-          .\build\bin\Release\CodexPluginSync.exe --selftest
+          .\build\bin\Release\CodexPluginSync.Cli.exe --selftest
 
       - name: Verify Package Generation
         shell: powershell
