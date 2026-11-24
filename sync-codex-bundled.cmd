@@ -2,6 +2,51 @@
 setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul
 title Codex bundled plugin sync - do not close
+set "SCRIPT_NAME=%~nx0"
+
+set "DO_PAUSE=0"
+if "%~1"=="" set "DO_PAUSE=1"
+
+set "RAW_ARGS="
+:ARG_LOOP
+if "%~1"=="" goto :ARG_DONE
+if /i "%~1"=="--no-pause" (
+  set "DO_PAUSE=0"
+  shift /1
+  goto :ARG_LOOP
+)
+if /i "%~1"=="-no-pause" (
+  set "DO_PAUSE=0"
+  shift /1
+  goto :ARG_LOOP
+)
+if /i "%~1"=="--pause" (
+  set "DO_PAUSE=1"
+  shift /1
+  goto :ARG_LOOP
+)
+if /i "%~1"=="-pause" (
+  set "DO_PAUSE=1"
+  shift /1
+  goto :ARG_LOOP
+)
+set "RAW_ARGS=!RAW_ARGS! %1"
+shift /1
+goto :ARG_LOOP
+:ARG_DONE
+
+if /i "%CODEX_NO_PAUSE%"=="1" set "DO_PAUSE=0"
+if /i "%CODEX_NO_PAUSE%"=="true" set "DO_PAUSE=0"
+if /i "%CI%"=="1" set "DO_PAUSE=0"
+if /i "%CI%"=="true" set "DO_PAUSE=0"
+if /i "%CODEX_PAUSE%"=="1" set "DO_PAUSE=1"
+
+set "MODE="
+set "REST_ARGS="
+for /f "tokens=1*" %%A in ("!RAW_ARGS!") do (
+  set "MODE=%%A"
+  set "REST_ARGS=%%B"
+)
 
 set "EXE_PATH=%~dp0CodexPluginSync.exe"
 if not exist "%EXE_PATH%" set "EXE_PATH=%~dp0build\bin\Release\CodexPluginSync.exe"
@@ -19,7 +64,6 @@ set "KEEP_BACKUPS=1"
 set "STALE_STAGE_HOURS=24"
 set "KEEP_LOG_DAYS=30"
 set "MIN_FREE_GB=1"
-set "MODE=%~1"
 
 if /i "%MODE%"=="--help" goto :MODE_HELP
 if /i "%MODE%"=="/h" goto :MODE_HELP
@@ -31,7 +75,6 @@ if not "%MODE%"=="" if /i not "%MODE%"=="--sync" goto :MODE_HELP
 goto :MODE_SYNC
 
 :DISPATCH_EXE
-set "MODE=%~1"
 if "%MODE%"=="" set "MODE=--sync"
 
 if /i "%MODE%"=="--help" goto :EXE_HELP
@@ -42,7 +85,7 @@ if /i "%MODE%"=="--check" (
   echo ================================================================
   echo Codex bundled plugin check
   echo ================================================================
-  "%EXE_PATH%" --check %2 %3 %4 %5 %6 %7 %8 %9
+  "%EXE_PATH%" --check !REST_ARGS!
   set "EXE_EXIT=!ERRORLEVEL!"
   if "!EXE_EXIT!"=="2" set "EXE_EXIT=0"
   goto :EXE_DONE
@@ -52,7 +95,7 @@ if /i "%MODE%"=="--sync" (
   echo ================================================================
   echo Codex bundled plugin sync
   echo ================================================================
-  "%EXE_PATH%" --sync %2 %3 %4 %5 %6 %7 %8 %9
+  "%EXE_PATH%" --sync !REST_ARGS!
   set "EXE_EXIT=!ERRORLEVEL!"
   goto :EXE_DONE
 )
@@ -61,7 +104,7 @@ if /i "%MODE%"=="--rollback" (
   echo ================================================================
   echo Codex bundled plugin rollback
   echo ================================================================
-  "%EXE_PATH%" --rollback %2 %3 %4 %5 %6 %7 %8 %9
+  "%EXE_PATH%" --rollback !REST_ARGS!
   set "EXE_EXIT=!ERRORLEVEL!"
   goto :EXE_DONE
 )
@@ -70,12 +113,12 @@ if /i "%MODE%"=="--cleanup-only" (
   echo ================================================================
   echo Codex bundled plugin cleanup
   echo ================================================================
-  "%EXE_PATH%" --cleanup-only %2 %3 %4 %5 %6 %7 %8 %9
+  "%EXE_PATH%" --cleanup-only !REST_ARGS!
   set "EXE_EXIT=!ERRORLEVEL!"
   goto :EXE_DONE
 )
 
-"%EXE_PATH%" %*
+"%EXE_PATH%" !RAW_ARGS!
 set "EXE_EXIT=!ERRORLEVEL!"
 goto :EXE_DONE
 
@@ -84,19 +127,23 @@ echo.
 echo Codex bundled plugin tools (EXE mode)
 echo.
 echo Usage:
-echo   %~nx0                  Synchronize bundled plugins (default: --sync)
-echo   %~nx0 --sync           Synchronize bundled plugins
-echo   %~nx0 --check          Check versions, processes, disk space, and backup status
-echo   %~nx0 --cleanup-only   Clean old backups, stages, and logs only
-echo   %~nx0 --rollback       Restore the newest completed rollback backup
-echo   %~nx0 --help           Show this help
+echo   %SCRIPT_NAME%                  Synchronize bundled plugins (default: --sync)
+echo   %SCRIPT_NAME% --sync           Synchronize bundled plugins
+echo   %SCRIPT_NAME% --check          Check versions, processes, disk space, and backup status
+echo   %SCRIPT_NAME% --cleanup-only   Clean old backups, stages, and logs only
+echo   %SCRIPT_NAME% --rollback       Restore the newest completed rollback backup
+echo   %SCRIPT_NAME% --help           Show this help
+echo.
+echo Options:
+echo   --no-pause             Do not wait for keypress on exit (for CI/scheduled tasks)
+echo   --pause                Always wait for keypress on exit
 echo.
 set "EXE_EXIT=0"
 goto :EXE_DONE
 
 :EXE_DONE
 echo.
-pause
+if "!DO_PAUSE!"=="1" pause
 endlocal & exit /b %EXE_EXIT%
 
 :MODE_HELP
@@ -115,7 +162,7 @@ echo Safety:
 echo   Close Codex Desktop, Chrome, and Edge before sync or rollback.
 echo   Current policy keeps %KEEP_BACKUPS% rollback backup and %KEEP_LOG_DAYS% days of logs.
 echo.
-pause
+if "!DO_PAUSE!"=="1" pause
 endlocal
 exit /b 0
 
@@ -126,14 +173,14 @@ echo ================================================================
 if not exist "%CHECK_SCRIPT%" (
   echo ERROR: Check script was not found.
   echo %CHECK_SCRIPT%
-  pause
+  if "!DO_PAUSE!"=="1" pause
   endlocal
   exit /b 1
 )
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%CHECK_SCRIPT%" -Root "%CODEX_HOME%" -MinimumFreeGB %MIN_FREE_GB%
 set "MODE_EXIT=!ERRORLEVEL!"
 echo.
-pause
+if "!DO_PAUSE!"=="1" pause
 endlocal & exit /b %MODE_EXIT%
 
 :MODE_CLEANUP
@@ -143,14 +190,14 @@ echo ================================================================
 if not exist "%CLEANUP_SCRIPT%" (
   echo ERROR: Cleanup script was not found.
   echo %CLEANUP_SCRIPT%
-  pause
+  if "!DO_PAUSE!"=="1" pause
   endlocal
   exit /b 1
 )
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%CLEANUP_SCRIPT%" -KeepBackups %KEEP_BACKUPS% -StaleStageHours %STALE_STAGE_HOURS% -KeepLogDays %KEEP_LOG_DAYS%
 set "MODE_EXIT=!ERRORLEVEL!"
 echo.
-pause
+if "!DO_PAUSE!"=="1" pause
 endlocal & exit /b %MODE_EXIT%
 
 :MODE_ROLLBACK
@@ -160,7 +207,7 @@ echo ================================================================
 if not exist "%ROLLBACK_SCRIPT%" (
   echo ERROR: Rollback script was not found.
   echo %ROLLBACK_SCRIPT%
-  pause
+  if "!DO_PAUSE!"=="1" pause
   endlocal
   exit /b 1
 )
@@ -172,7 +219,7 @@ set "MODE_EXIT=!ERRORLEVEL!"
 echo.
 if not "!MODE_EXIT!"=="0" echo ROLLBACK FAILED. Review the error above.
 if "!MODE_EXIT!"=="0" echo ROLLBACK SUCCEEDED. Restart Codex Desktop before using it.
-pause
+if "!DO_PAUSE!"=="1" pause
 endlocal & exit /b %MODE_EXIT%
 
 :MODE_SYNC
@@ -191,7 +238,7 @@ if not exist "%SYNC_SCRIPT%" (
   echo ERROR: Sync script was not found.
   echo %SYNC_SCRIPT%
   echo.
-  pause
+  if "!DO_PAUSE!"=="1" pause
   endlocal
   exit /b 1
 )
@@ -200,7 +247,7 @@ if not exist "%CHECK_SCRIPT%" (
   echo ERROR: Disk-check script was not found.
   echo %CHECK_SCRIPT%
   echo.
-  pause
+  if "!DO_PAUSE!"=="1" pause
   endlocal
   exit /b 1
 )
@@ -213,7 +260,7 @@ if not "!DISK_EXIT!"=="0" (
   echo SYNC ABORTED. Disk-space preflight failed.
   echo Required minimum free space per drive: %MIN_FREE_GB% GB.
   echo ================================================================
-  pause
+  if "!DO_PAUSE!"=="1" pause
   endlocal & exit /b !DISK_EXIT!
 )
 
@@ -230,7 +277,7 @@ if not "!SYNC_EXIT!"=="0" (
   echo Send this window or the log file to Codex:
   echo %LOG_FILE%
   echo ================================================================
-  pause
+  if "!DO_PAUSE!"=="1" pause
   endlocal & exit /b !SYNC_EXIT!
 )
 
@@ -249,6 +296,6 @@ echo SYNC SUCCEEDED. Fully quit and restart Codex Desktop.
 echo Full log: %LOG_FILE%
 echo Cleanup policy: keep %KEEP_BACKUPS% backup, remove stages older than %STALE_STAGE_HOURS% hours, keep logs %KEEP_LOG_DAYS% days.
 echo ================================================================
-pause
+if "!DO_PAUSE!"=="1" pause
 endlocal
 exit /b 0
