@@ -90,10 +90,6 @@ The AppX bundle can contain plugins that are not part of the persistent Marketpl
 3. Click **检查状态** to inspect the components (purely read-only).
 4. If an update is needed, click **立即同步** (asks for confirmation and creates a backup first).
 
-<div align="center">
-  <img src="docs/screenshots/gui-main.png" alt="CodexPluginSync GUI" width="720" />
-</div>
-
 #### Option B: Command Line Interface & Automation
 
 For command-line usage, automated scripts, CI, and Windows Task Scheduler:
