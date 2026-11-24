@@ -31,12 +31,39 @@ namespace CodexPluginSync.Core
             string hostName = ReadEnvironment("COMPUTERNAME");
             string temp = Path.GetTempPath();
 
-            Add(profile, DrivePrefix(profile) + "<profile>");
+            if (!string.IsNullOrEmpty(codexHome))
+            {
+                string trimmedCodexHome = codexHome.TrimEnd('\\', '/');
+                Add(trimmedCodexHome, DrivePrefix(trimmedCodexHome) + "<codexhome>");
+            }
             Add(codexHome, DrivePrefix(codexHome) + "<codexhome>");
-            Add(Environment.ExpandEnvironmentVariables("%TEMP%"), DrivePrefix(temp) + "<temp>");
+
+            string envTemp = Environment.ExpandEnvironmentVariables("%TEMP%");
+            if (!string.IsNullOrEmpty(envTemp))
+            {
+                string trimmedEnvTemp = envTemp.TrimEnd('\\', '/');
+                Add(trimmedEnvTemp, DrivePrefix(trimmedEnvTemp) + "<temp>");
+            }
+            Add(envTemp, DrivePrefix(envTemp) + "<temp>");
+
+            if (!string.IsNullOrEmpty(temp))
+            {
+                string trimmedTemp = temp.TrimEnd('\\', '/');
+                Add(trimmedTemp, DrivePrefix(trimmedTemp) + "<temp>");
+            }
             Add(temp, DrivePrefix(temp) + "<temp>");
+
+            if (!string.IsNullOrEmpty(profile))
+            {
+                string trimmedProfile = profile.TrimEnd('\\', '/');
+                Add(trimmedProfile, DrivePrefix(trimmedProfile) + "<profile>");
+            }
+            Add(profile, DrivePrefix(profile) + "<profile>");
+
             Add(userName, "<user>");
             Add(hostName, "<host>");
+
+            SortNeedlesDescending();
         }
 
         public string Redact(string text)
@@ -55,8 +82,32 @@ namespace CodexPluginSync.Core
         private void Add(string needle, string replacement)
         {
             if (string.IsNullOrEmpty(needle) || !Enabled) { return; }
+            for (int i = 0; i < _needles.Count; i++)
+            {
+                if (string.Equals(_needles[i], needle, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
             _needles.Add(needle);
             _replacement.Add(replacement);
+        }
+
+        private void SortNeedlesDescending()
+        {
+            List<KeyValuePair<string, string>> pairs = new List<KeyValuePair<string, string>>(_needles.Count);
+            for (int i = 0; i < _needles.Count; i++)
+            {
+                pairs.Add(new KeyValuePair<string, string>(_needles[i], _replacement[i]));
+            }
+            pairs.Sort((a, b) => b.Key.Length.CompareTo(a.Key.Length));
+            _needles.Clear();
+            _replacement.Clear();
+            for (int i = 0; i < pairs.Count; i++)
+            {
+                _needles.Add(pairs[i].Key);
+                _replacement.Add(pairs[i].Value);
+            }
         }
 
         private static string ReplaceOrdinalIgnoreCase(string text, string needle, string replacement)
