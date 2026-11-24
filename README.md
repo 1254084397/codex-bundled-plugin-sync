@@ -74,7 +74,7 @@ set CODEX_HOME=E:\CodexHome
 CodexPluginSync.exe --check
 ```
 
-> The legacy `sync-codex-bundled.cmd` wrapper still works and still defaults to “sync” with no arguments. When `CodexPluginSync.exe` is present (such as in release zips), it calls the exe directly and maps exit code `2` back to `0` for batch compatibility; in raw source checkouts without the binary, it falls back to the PowerShell scripts under `scripts/`.
+> The legacy `sync-codex-bundled.cmd` wrapper still works and defaults to “sync” with no arguments. When `CodexPluginSync.exe` is present (such as in release zips), it calls the exe directly and maps exit code `2` back to `0` for batch compatibility. Note the automation boundary: with no arguments, `.cmd` pauses on exit so double-clicking in Explorer keeps the window open. If invoking `.cmd` with no arguments from Windows Task Scheduler or automated scripts, pass `--no-pause` or set `CODEX_NO_PAUSE=1` (or `CI=1`); explicit command arguments like `--check` or `--sync` do not pause. In raw source checkouts without the binary, it falls back to the PowerShell scripts under `scripts/`.
 
 ### What blocks a sync
 
@@ -273,7 +273,7 @@ set CODEX_HOME=E:\CodexHome
 CodexPluginSync.exe --check
 ```
 
-> 旧的 `sync-codex-bundled.cmd` 仍然可用，无参数依旧默认执行“同步”。当目录中存在 `CodexPluginSync.exe`（如发布包解压后）时，它会自动调用 exe 并将退出码 `2` 映射回 `0`，无需依赖 `scripts/`；在源码环境中若未编译 exe，则自动回落到 `scripts/` 的 PowerShell 实现。
+> 旧的 `sync-codex-bundled.cmd` 仍然可用，无参数依旧默认执行“同步”。当目录中存在 `CodexPluginSync.exe`（如发布包解压后）时，它会自动调用 exe 并将退出码 `2` 映射回 `0`，无需依赖 `scripts/`。**注意自动化边界**：无参数启动时 `.cmd` 会在末尾执行 `pause`（方便在文件管理器中双击查看输出）；若在 Windows 计划任务或后台脚本中**无参数**调用，需显式传入 `--no-pause` 或设置环境变量 `CODEX_NO_PAUSE=1`（或 `CI=1`）避免挂起；显式传入 `--check` / `--sync` / `--rollback` / `--cleanup-only` 等参数时则默认不会暂停。在源码环境中若未编译 exe，则自动回落到 `scripts/` 的 PowerShell 实现。
 
 ### 什么会阻止同步
 

@@ -5,6 +5,7 @@
 ### Added
 
 - WinForms desktop interface for status checks, synchronization, rollback, cleanup, and diagnostic export.
+- Standalone `sync-codex-bundled.cmd` wrapper calling the exe directly with 2->0 exit-code mapping on `--check`. Note: no-argument invocation pauses for double-click visibility; automated/headless no-argument tasks should pass `--no-pause` or set `CODEX_NO_PAUSE=1` (explicit command arguments like `--check` or `--sync` exit without pause).
 - Single-exe release packaging through `build/package.ps1`.
 - Background GitHub Releases check in the GUI, showing the current version and a newer published version when available.
 - Headless CLI commands for `--check`, `--sync`, `--rollback`, `--cleanup-only`, `--export-diag`, and `--selftest`.
