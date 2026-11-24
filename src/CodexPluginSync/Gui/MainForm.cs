@@ -174,7 +174,8 @@ namespace CodexPluginSync.Gui
                 if (_activeSyncOptions != null)
                 {
                     _activeSyncOptions.CancelRequested = true;
-                    _lblBottomStatus.Text = "正在请求取消…";
+                    _btnCancel.Text = "正在取消…";
+                    _lblBottomStatus.Text = "当前阶段：正在请求取消…";
                     _btnCancel.Enabled = false;
                 }
             };
@@ -575,6 +576,7 @@ namespace CodexPluginSync.Gui
             _activeSyncOptions = new SyncOptions();
             _activeSyncOptions.CodexHome = _codexHome;
 
+            _btnCancel.Text = "取消同步";
             _btnCancel.Visible = true;
             _btnCancel.Enabled = true;
 

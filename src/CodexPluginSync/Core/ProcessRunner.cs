@@ -111,11 +111,7 @@ namespace CodexPluginSync.Core
                 {
                     result.TimedOut = true;
                     result.Success = false;
-                    try
-                    {
-                        process.Kill();
-                    }
-                    catch (Exception) { }
+                    KillProcessTree(process);
                     result.ErrorMessage = commandType + " 执行超时（超过 " + (timeoutMilliseconds / 1000) + " 秒）并已被强制终止";
                     return result;
                 }
@@ -136,20 +132,30 @@ namespace CodexPluginSync.Core
                 // 退出码语义判定
                 if (commandType == "robocopy")
                 {
+                    // robocopy 位掩码退出码：0-7 属于不同程度的复制成功，8+ 为失败
                     if (result.ExitCode >= 0 && result.ExitCode <= 7)
                     {
                         result.Success = true;
                     }
-                    else if (result.ExitCode == 32 || result.ExitCode == 33)
-                    {
-                        result.Success = false;
-                        result.ErrorMessage = "文件被占用（robocopy 退出码 " + result.ExitCode + "）";
-                    }
                     else
                     {
                         result.Success = false;
-                        result.ErrorMessage = "robocopy 执行失败，退出码 " + result.ExitCode +
-                            (!string.IsNullOrEmpty(result.StandardError) ? "：" + result.StandardError.Trim() : "");
+                        string combined = (result.StandardOutput ?? "") + " " + (result.StandardError ?? "");
+                        bool isSharingViolation = combined.IndexOf("ERROR 32", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                                  combined.IndexOf("ERROR 33", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                                  combined.IndexOf("used by another process", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                                  combined.IndexOf("SHARING_VIOLATION", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                                  combined.IndexOf("LOCK_VIOLATION", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                        if (isSharingViolation)
+                        {
+                            result.ErrorMessage = "文件被其他进程占用（检测到共享锁定冲突，robocopy 退出码 " + result.ExitCode + "）";
+                        }
+                        else
+                        {
+                            result.ErrorMessage = "robocopy 执行失败，退出码 " + result.ExitCode +
+                                (!string.IsNullOrEmpty(result.StandardError) ? "：" + result.StandardError.Trim() : "");
+                        }
                     }
                 }
                 else
@@ -176,6 +182,44 @@ namespace CodexPluginSync.Core
 
                 return result;
             }
+        }
+
+        private static void KillProcessTree(Process process)
+        {
+            if (process == null) return;
+            try
+            {
+                int pid = process.Id;
+                try
+                {
+                    ProcessStartInfo psi = new ProcessStartInfo("taskkill.exe", "/F /T /PID " + pid)
+                    {
+                        CreateNoWindow = true,
+                        UseShellExecute = false,
+                        WindowStyle = ProcessWindowStyle.Hidden
+                    };
+                    using (Process killer = Process.Start(psi))
+                    {
+                        if (killer != null)
+                        {
+                            killer.WaitForExit(3000);
+                        }
+                    }
+                }
+                catch (Exception) { }
+
+                try
+                {
+                    if (!process.HasExited)
+                    {
+                        process.Kill();
+                    }
+                }
+                catch (Exception) { }
+
+                process.WaitForExit(3000);
+            }
+            catch (Exception) { }
         }
     }
 }

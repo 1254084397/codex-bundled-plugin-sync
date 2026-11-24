@@ -85,6 +85,12 @@ namespace CodexPluginSync.Cli
                     case "--no-redact":
                         options.NoRedact = true;
                         break;
+                    case "--no-pause":
+                    case "-no-pause":
+                    case "--pause":
+                    case "-pause":
+                        // 兼容批处理包装器传递的控制台暂停标志，静默忽略
+                        break;
                     case "--backup":
                     case "--out":
                     case "--fixture":

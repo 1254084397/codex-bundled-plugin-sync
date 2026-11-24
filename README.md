@@ -28,7 +28,7 @@
 
 | Feature | Description |
 | :--- | :--- |
-| 🖥️ **Single-EXE Distribution** | Compact WinForms GUI + headless CLI in one standalone executable. Zero external DLL dependencies. |
+| 🖥️ **Dual-Binary Distribution** | Compact WinForms GUI (`CodexPluginSync.exe`) + dedicated headless CLI (`CodexPluginSync.Cli.exe`). Zero external DLL dependencies. |
 | 🛡️ **Zero-Loss Crash Recovery** | 7-stage transactional state machine with write-ahead journal and 11-row recovery matrix. |
 | 🔒 **Enterprise EFS & Reparse-Safe** | Handles NTFS EFS encryption properly (`cipher /e` → `robocopy /COPY:DAT` → `cipher /d`), resolves directory junctions without infinite recursion. |
 | 🔍 **SHA-256 Digest Verification** | Verifies copied trees against expected digests before any live directory swap occurs. |
@@ -128,7 +128,7 @@ If a sync is refused with `检测到会锁住插件目录的进程`, close the l
 
 | Command | Purpose | Writes plugin files? |
 | --- | --- | :---: |
-| *(no arguments)* | Open the GUI | No |
+| *(no arguments)* | Open the GUI (`CodexPluginSync.exe`) or show CLI help (`CodexPluginSync.Cli.exe`) | No |
 | `--check` | Show Desktop, Marketplace, cache, disk, and process status | No |
 | `--sync` | Synchronize Marketplace and managed caches | Yes |
 | `--rollback [--backup <id>]` | Restore a completed synchronization backup (newest by default) | Yes |
@@ -172,7 +172,7 @@ Codex Desktop 的内置插件（浏览器控制、Chrome 原生消息宿主、�
 
 ### 核心特性
 
-- 🖥️ **单 EXE 独立分发**：包含 WinForms 桌面界面与无头 CLI，无第三方 DLL 依赖，开箱即用。
+- 🖥️ **双独立入口分发**：包含轻量 WinForms 桌面界面（`CodexPluginSync.exe`）与专用无头 CLI（`CodexPluginSync.Cli.exe`），零外部 DLL 依赖，开箱即用。
 - 🛡️ **七阶段事务与零丢失崩溃恢复**：写前日志（Journal）+ 11 行恢复矩阵，无论写入中途断电还是进程强杀，均能自动回滚或收尾。
 - 🔒 **企业级 EFS 加密与链接安全**：正确处理 Windows NTFS EFS 加密属性与目录 Junction，杜绝权限报错与无限递归。
 - 🔍 **SHA-256 树指纹校验**：替换前对文件树做全量摘要比对，只有完全吻合才执行提交。
@@ -212,7 +212,7 @@ CodexPluginSync.Cli.exe --rollback
 
 | 命令 | 用途 | 是否修改插件文件？ |
 | --- | --- | :---: |
-| *(无参数)* | 打开 WinForms 图形界面 | 否 |
+| *(无参数)* | 运行 `CodexPluginSync.exe` 打开 GUI 界面；运行 `CodexPluginSync.Cli.exe` 打印命令行帮助 | 否 |
 | `--check` | 只读检查桌面端、本地市场、缓存、磁盘与锁文件进程 | 否 |
 | `--sync` | 执行事务同步并修补 Chrome 原生消息宿主 | 是 |
 | `--rollback [--backup <id>]` | 回滚到指定或最新的完整同步快照 | 是 |
@@ -226,18 +226,19 @@ CodexPluginSync.Cli.exe --rollback
 ```text
 .
 ├── src/CodexPluginSync/
-│   ├── Program.cs            # 程序入口：无参数打开 GUI，带参数走 CLI
-│   ├── Cli/                  # 命令行解析、退出码、控制台格式化报告
-│   ├── Core/                 # 核心事务状态机、EFS 处理、哈希计算、恢复矩阵
-│   └── Gui/                  # WinForms 桌面界面
+│   ├── Program.cs                # 程序入口：GUI 双击直接运行，CLI 无参数打印帮助
+│   ├── Cli/                      # 命令行解析、退出码、控制台格式化报告
+│   ├── Core/                     # 事务状态机、ProcessRunner 静默进程管理、ConsoleManager、EFS 处理、哈希计算
+│   └── Gui/                      # WinForms 桌面界面
 ├── build/
-│   ├── CodexPluginSync.csproj # MSBuild 项目文件（单 exe 断言）
-│   └── package.ps1           # 自动化构建、27 项自测与发布打包脚本
-├── scripts/                  # 早期 legacy PowerShell 参考实现
-├── docs/                     # 设计规范 (DESIGN.md)、验收状态 (M1-STATUS.md)
-├── sync-codex-bundled.cmd    # 兼容批处理包装器
-├── CHANGELOG.md              # 版本演进记录
-├── LICENSE                   # MIT 开源许可证
+│   ├── CodexPluginSync.csproj    # WinExe 项目文件（GUI 入口，零控制台黑框）
+│   ├── CodexPluginSync.Cli.csproj# Exe 项目文件（标准 CLI 控制台程序）
+│   └── package.ps1               # 自动化构建、27 项自测与双入口发布打包脚本
+├── scripts/                      # 早期 legacy PowerShell 参考实现
+├── docs/                         # 设计规范 (DESIGN.md)、验收状态 (M1-STATUS.md)
+├── sync-codex-bundled.cmd        # 兼容批处理包装器（禁用延迟展开，直接透传参数）
+├── CHANGELOG.md                  # 版本演进记录
+├── LICENSE                       # MIT 开源许可证
 └── README.md
 ```
 

@@ -113,63 +113,84 @@ namespace CodexPluginSync.Core
                     Guid.NewGuid().ToString("N").Substring(0, 6);
                 string backupDirectory = Path.Combine(paths.BackupsRoot, "openai-bundled-sync-" + runId);
 
-                // 1) Marketplace -------------------------------------------------
-                bool bundleNeedsSync = options.Force || !MarketplaceIsCurrent(sourceBundle, paths.MarketBundle);
-                if (bundleNeedsSync)
+                Func<bool> isCancelled = () => options.CancelRequested;
+                try
                 {
-                    SyncTarget marketplace = new SyncTarget();
-                    marketplace.Component = "marketplace";
-                    marketplace.LivePath = paths.MarketBundle;
-                    marketplace.StagePath = Path.Combine(paths.MarketParent, "openai-bundled.stage-" + runId);
-                    marketplace.BackupPath = Path.Combine(backupDirectory, "marketplace.previous");
-                    marketplace.ExistedBefore = Directory.Exists(paths.MarketBundle);
-                    Directory.CreateDirectory(paths.MarketParent);
-                    Installer.CopyTreePreservingLinks(sourceBundle, marketplace.StagePath);
-                    targets.Add(marketplace);
-                    result.Lines.Add("staged marketplace（" + CountFiles(marketplace.StagePath) + " 个文件）");
+                    // 1) Marketplace -------------------------------------------------
+                    bool bundleNeedsSync = options.Force || !MarketplaceIsCurrent(sourceBundle, paths.MarketBundle);
+                    if (bundleNeedsSync)
+                    {
+                        SyncTarget marketplace = new SyncTarget();
+                        marketplace.Component = "marketplace";
+                        marketplace.LivePath = paths.MarketBundle;
+                        marketplace.StagePath = Path.Combine(paths.MarketParent, "openai-bundled.stage-" + runId);
+                        marketplace.BackupPath = Path.Combine(backupDirectory, "marketplace.previous");
+                        marketplace.ExistedBefore = Directory.Exists(paths.MarketBundle);
+                        Directory.CreateDirectory(paths.MarketParent);
+                        Installer.CopyTreePreservingLinks(sourceBundle, marketplace.StagePath, isCancelled);
+                        targets.Add(marketplace);
+                        result.Lines.Add("staged marketplace（" + CountFiles(marketplace.StagePath) + " 个文件）");
+                    }
+
+                    // 2) 受管缓存 -----------------------------------------------------
+                    for (int i = 0; i < ManagedPlugins.Length; i++)
+                    {
+                        if (options.CancelRequested)
+                        {
+                            throw new OperationCanceledException("用户已取消同步。");
+                        }
+
+                        string plugin = ManagedPlugins[i];
+                        string sourcePlugin = Path.Combine(Path.Combine(sourceBundle, "plugins"), plugin);
+                        if (!Directory.Exists(sourcePlugin))
+                        {
+                            result.Message = "内置包中缺少插件：" + plugin;
+                            error.WriteLine(result.Message);
+                            return result;
+                        }
+                        string manifestPath = Path.Combine(sourcePlugin, ".codex-plugin\\plugin.json");
+                        PluginManifestDto manifest = PluginInventory.TryReadManifest(manifestPath);
+                        if (manifest == null || string.IsNullOrEmpty(manifest.Version))
+                        {
+                            result.Message = "内置插件清单不可读：" + manifestPath;
+                            error.WriteLine(result.Message);
+                            return result;
+                        }
+                        string version = manifest.Version;
+                        if (plugin == "chrome") { chromeVersion = version; }
+                        string livePath = Path.Combine(paths.CacheParent, plugin);
+                        string cachedManifest = Path.Combine(Path.Combine(livePath, version), ".codex-plugin\\plugin.json");
+                        if (!options.Force && File.Exists(cachedManifest))
+                        {
+                            result.Lines.Add(plugin + "：已是 " + version + "，跳过");
+                            continue;
+                        }
+
+                        SyncTarget target = new SyncTarget();
+                        target.Component = "cache:" + plugin;
+                        target.LivePath = livePath;
+                        target.StagePath = Path.Combine(paths.CacheParent, plugin + ".stage-" + runId);
+                        target.BackupPath = Path.Combine(backupDirectory, "cache-" + plugin + ".previous");
+                        target.ExistedBefore = Directory.Exists(livePath);
+
+                        string versionStage = Path.Combine(target.StagePath, version);
+                        Directory.CreateDirectory(target.StagePath);
+                        Installer.CopyTreePreservingLinks(sourcePlugin, versionStage, isCancelled);
+                        targets.Add(target);
+                        result.Lines.Add("staged " + plugin + "@" + version + "（" + CountFiles(versionStage) + " 个文件）");
+                    }
                 }
-
-                // 2) 受管缓存 -----------------------------------------------------
-                for (int i = 0; i < ManagedPlugins.Length; i++)
+                catch (OperationCanceledException)
                 {
-                    string plugin = ManagedPlugins[i];
-                    string sourcePlugin = Path.Combine(Path.Combine(sourceBundle, "plugins"), plugin);
-                    if (!Directory.Exists(sourcePlugin))
+                    for (int j = 0; j < targets.Count; j++)
                     {
-                        result.Message = "内置包中缺少插件：" + plugin;
-                        error.WriteLine(result.Message);
-                        return result;
+                        try { if (Directory.Exists(targets[j].StagePath)) Directory.Delete(targets[j].StagePath, true); } catch (Exception) { }
                     }
-                    string manifestPath = Path.Combine(sourcePlugin, ".codex-plugin\\plugin.json");
-                    PluginManifestDto manifest = PluginInventory.TryReadManifest(manifestPath);
-                    if (manifest == null || string.IsNullOrEmpty(manifest.Version))
-                    {
-                        result.Message = "内置插件清单不可读：" + manifestPath;
-                        error.WriteLine(result.Message);
-                        return result;
-                    }
-                    string version = manifest.Version;
-                    if (plugin == "chrome") { chromeVersion = version; }
-                    string livePath = Path.Combine(paths.CacheParent, plugin);
-                    string cachedManifest = Path.Combine(Path.Combine(livePath, version), ".codex-plugin\\plugin.json");
-                    if (!options.Force && File.Exists(cachedManifest))
-                    {
-                        result.Lines.Add(plugin + "：已是 " + version + "，跳过");
-                        continue;
-                    }
-
-                    SyncTarget target = new SyncTarget();
-                    target.Component = "cache:" + plugin;
-                    target.LivePath = livePath;
-                    target.StagePath = Path.Combine(paths.CacheParent, plugin + ".stage-" + runId);
-                    target.BackupPath = Path.Combine(backupDirectory, "cache-" + plugin + ".previous");
-                    target.ExistedBefore = Directory.Exists(livePath);
-
-                    string versionStage = Path.Combine(target.StagePath, version);
-                    Directory.CreateDirectory(target.StagePath);
-                    Installer.CopyTreePreservingLinks(sourcePlugin, versionStage);
-                    targets.Add(target);
-                    result.Lines.Add("staged " + plugin + "@" + version + "（" + CountFiles(versionStage) + " 个文件）");
+                    result.Status = SyncTransaction.StatusAborted;
+                    result.Message = "用户已取消同步。";
+                    result.ExitCode = ExitCodesLocator.Ok;
+                    output.WriteLine(result.Message);
+                    return result;
                 }
 
                 if (targets.Count == 0)

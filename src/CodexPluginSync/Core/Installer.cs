@@ -24,7 +24,7 @@ namespace CodexPluginSync.Core
         private static extern bool CloseHandle(IntPtr hObject);
         private const FileAttributes ReparseFlag = FileAttributes.ReparsePoint;
 
-        public static void CopyTree(string source, string destination)
+        public static void CopyTree(string source, string destination, Func<bool> isCancelled = null)
         {
             if (string.IsNullOrEmpty(source)) { throw new ArgumentNullException("source"); }
             if (string.IsNullOrEmpty(destination)) { throw new ArgumentNullException("destination"); }
@@ -33,7 +33,7 @@ namespace CodexPluginSync.Core
                 throw new DirectoryNotFoundException("源目录不存在：" + source);
             }
 
-            CopyDirectory(source, destination, new List<ReparseEntry>());
+            CopyDirectory(source, destination, new List<ReparseEntry>(), isCancelled);
         }
 
         private sealed class ReparseEntry
@@ -42,8 +42,13 @@ namespace CodexPluginSync.Core
             public string Target;
         }
 
-        private static void CopyDirectory(string source, string destination, List<ReparseEntry> links)
+        private static void CopyDirectory(string source, string destination, List<ReparseEntry> links, Func<bool> isCancelled = null)
         {
+            if (isCancelled != null && isCancelled())
+            {
+                throw new OperationCanceledException("复制操作已被取消");
+            }
+
             Directory.CreateDirectory(destination);
 
             string[] files;
@@ -60,12 +65,20 @@ namespace CodexPluginSync.Core
 
             for (int i = 0; i < files.Length; i++)
             {
+                if (isCancelled != null && isCancelled())
+                {
+                    throw new OperationCanceledException("复制操作已被取消");
+                }
                 string target = Path.Combine(destination, Path.GetFileName(files[i]));
                 CopyFileRobust(files[i], target, destination);
             }
 
             for (int i = 0; i < directories.Length; i++)
             {
+                if (isCancelled != null && isCancelled())
+                {
+                    throw new OperationCanceledException("复制操作已被取消");
+                }
                 string directory = directories[i];
                 string name = Path.GetFileName(directory);
                 string target = Path.Combine(destination, name);
@@ -79,7 +92,7 @@ namespace CodexPluginSync.Core
                     links.Add(entry);
                     continue;
                 }
-                CopyDirectory(directory, target, links);
+                CopyDirectory(directory, target, links, isCancelled);
             }
         }
 
@@ -168,10 +181,10 @@ namespace CodexPluginSync.Core
         /// 复制完成后再统一重建 reparse point：目标仍在源树内时映射到副本内，
         /// 否则按原目标重建（脚本层同样处理）。
         /// </summary>
-        public static void CopyTreePreservingLinks(string source, string destination)
+        public static void CopyTreePreservingLinks(string source, string destination, Func<bool> isCancelled = null)
         {
             List<ReparseEntry> links = new List<ReparseEntry>();
-            CopyDirectory(source, destination, links);
+            CopyDirectory(source, destination, links, isCancelled);
 
             string sourceRoot = Path.GetFullPath(source).TrimEnd('\\');
             string destinationRoot = Path.GetFullPath(destination).TrimEnd('\\');

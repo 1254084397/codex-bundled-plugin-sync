@@ -1,4 +1,4 @@
-﻿# 打一个可以发给别人的发布包：单个 exe + README + LICENSE，压缩成 zip。
+﻿# 双独立入口发布包 (GUI + CLI，零外部 DLL 依赖)：CodexPluginSync.exe + CodexPluginSync.Cli.exe + README + LICENSE + CHANGELOG + .cmd，压缩成 zip。
 # 用法：powershell -ExecutionPolicy Bypass -File .\build\package.ps1
 # 产物：dist\CodexPluginSync-<版本>.zip
 [CmdletBinding()]
