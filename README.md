@@ -135,7 +135,7 @@ If a sync is refused with `检测到会锁住插件目录的进程`, close the l
 | `--rollback [--backup <id>]` | Restore a completed synchronization backup (newest by default) | Yes |
 | `--cleanup-only [--dry-run]` | Remove old backups, stages, and logs | No plugin changes |
 | `--export-diag [--out <path>] [--no-redact]` | Write a redacted diagnostic zip | No |
-| `--selftest` | Run the built-in fixture suite (27 test cases) | No (temp dirs only) |
+| `--selftest` | Run the built-in fixture suite (28 test cases) | No (temp dirs only) |
 | `--help` | Print command help | No |
 
 PowerShell scripts can also be called directly with `-Root`:
@@ -219,7 +219,7 @@ CodexPluginSync.Cli.exe --rollback
 | `--rollback [--backup <id>]` | 回滚到指定或最新的完整同步快照 | 是 |
 | `--cleanup-only [--dry-run]` | 清理过期暂存、废弃备份与历史日志 | 否（仅清理运维文件） |
 | `--export-diag [--out <路径>]` | 导出脱敏的诊断压缩包（用于反馈问题） | 否 |
-| `--selftest` | 运行内置 27 项自测试用例（仅使用临时目录） | 否 |
+| `--selftest` | 运行内置 28 项自测试用例（仅使用临时目录） | 否 |
 | `--help` | 显示完整命令行帮助 | 否 |
 
 ### 仓库结构
@@ -234,7 +234,7 @@ CodexPluginSync.Cli.exe --rollback
 ├── build/
 │   ├── CodexPluginSync.csproj    # WinExe 项目文件（GUI 入口，零控制台黑框）
 │   ├── CodexPluginSync.Cli.csproj# Exe 项目文件（标准 CLI 控制台程序）
-│   └── package.ps1               # 自动化构建、27 项自测与双入口发布打包脚本
+│   └── package.ps1               # 自动化构建、28 项自测与双入口发布打包脚本
 ├── scripts/                      # 早期 legacy PowerShell 参考实现
 ├── docs/                         # 设计规范 (DESIGN.md)、验收状态 (M1-STATUS.md)
 ├── sync-codex-bundled.cmd        # 兼容批处理包装器（禁用延迟展开，直接透传参数）

@@ -318,7 +318,7 @@ docs/DESIGN.md                  # 本文档
   "language": "auto",
   "theme": "auto",
   "runAtStartup": false,
-  "autoCheckHours": 6,
+  "autoCheckHours": 0,
   "keepBackups": 1,
   "staleStageHours": 24,
   "keepLogDays": 30,
@@ -977,7 +977,7 @@ UI 只消费 `StateSnapshot` 与事件，不自行判断路径或版本。
 | 语言 | 跟随系统 | 中文 / English |
 | 主题 | 跟随系统 | 深色需 `DwmSetWindowAttribute(20)` 让标题栏一起变暗 |
 | 开机启动托盘常驻 | 关 | opt-in，写 `HKCU\...\Run` |
-| 自动检查间隔 | 6 小时 | 0 = 关闭 |
+| 自动检查间隔 | 0（关闭） | 0 = 关闭；开启建议设为 6 小时（支持 1–72 小时） |
 | 备份保留数量 | 1 | |
 | 过期 stage 清理阈值 | 24 小时 | |
 | 日志保留天数 | 30 | |
@@ -992,7 +992,8 @@ UI 只消费 `StateSnapshot` 与事件，不自行判断路径或版本。
 ## 12. 托盘与定时检查
 
 - `NotifyIcon`，右键菜单：`打开主窗口 / 立即检查 / 退出`。
-- 启动后延迟 2 分钟首检，之后每 `autoCheckHours` 小时；主窗口打开时只更新状态、不弹通知。
+- 默认关闭（`autoCheckHours=0`）；开启时延迟 2 分钟首检，之后每 `autoCheckHours` 小时（支持 1–72 小时，超出回退为 0 关闭）；主窗口打开时只更新状态、不弹通知。
+- 后台检查与用户操作使用原子锁严格互斥，且在用户操作期间或忙碌状态下自动丢弃过期结果，常驻不干扰 Core。
 - `verdict=update-needed` 弹气泡通知（net48 的 WinRT Toast 需额外组件，用 `ShowBalloonTip` 更稳）。
 - 气泡点击 → 打开主窗口并重新检查；**不自动同步**。
 - 默认不随系统启动；开启后在设置页显示注册表位置。
@@ -1146,7 +1147,7 @@ CI（`.github/workflows/build.yml`）：`windows-latest` → msbuild Release →
 | **M1** | 无界面 Core + selftest：Paths / Check / Sync / Rollback / Cleanup / Journal / BackupStore / Hasher / Redactor | `--selftest` 在 fixture 上全绿（§16.1），**且 §6.6 矩阵 11 行每行至少一个 fixture 用例** |
 | **M2** | CLI 兼容层：参数、退出码、`--json`、`.cmd` 改为调用 exe 并做 2→0 映射 | 旧计划任务/批处理不中断（§2.4） |
 | **M3** | WinForms 主界面：同步、备份、日志、恢复状态；只消费 `StateSnapshot` 与事件 | 可完成完整同步/回滚流程 |
-| **M4** | 托盘与定时检查（默认关闭、启动延迟、6 小时） | 常驻不干扰 Core |
+| **M4** | 托盘与定时检查（默认关闭、0 表示关闭、开启支持 1–72 小时） | 常驻不干扰 Core |
 | **M5** | 真机验收（§16.2）+ 构建/CI/README 重写 | v1.0 发布 |
 
 顺序理由：事务状态、备份快照、退出码是后续所有工作的地基，先冻结；UI 的收益低于先把一致性做对。

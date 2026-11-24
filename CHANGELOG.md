@@ -16,7 +16,7 @@
   - Minimize to system tray (`NotifyIcon`) on window close (`X`) or minimize, with informational balloon tip on first hide.
   - Tray context menu: "打开主窗口", "立即检查", "立即同步", "-", "访问 GitHub 主页", "退出".
   - Clean exit option disposing unmanaged tray icon and timer resources.
-  - Periodic background silent checks (configured via `Settings.AutoCheckHours`, initial 2-minute delay) with balloon tip notifications when updates are detected.
+  - Periodic background silent checks (opt-in via `Settings.AutoCheckHours`, default disabled = 0, initial 2-minute delay when enabled, strict lock mutual exclusion with foreground operations) with balloon tip notifications when updates are detected.
   - Single-instance mutex protection for GUI mode preventing duplicate tray instances.
 - Headless CLI commands for `--check`, `--sync`, `--rollback`, `--cleanup-only`, `--export-diag`, and `--selftest`.
 - Component snapshot backups, crash recovery journal, SHA-256 verification, EFS handling, native-host path checks, and redacted diagnostic archives.

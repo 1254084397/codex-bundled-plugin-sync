@@ -31,7 +31,7 @@ try {
     $version = (Get-Item -LiteralPath $exe).VersionInfo.FileVersion
     if ([string]::IsNullOrWhiteSpace($version)) { $version = '1.0.0' }
 
-    Write-Host '== 自检（必须全绿，否则不打包）=='
+    Write-Host '== 自检（必须 28 项全绿，否则不打包）=='
     & $cliExe --selftest | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "自检未通过（exit $LASTEXITCODE），拒绝打包" }
 

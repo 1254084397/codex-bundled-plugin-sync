@@ -48,6 +48,8 @@ namespace CodexPluginSync.Gui
         private bool _reallyExit = false;
         private bool _hasShownTrayBalloon = false;
         private bool _isFirstBgTick = true;
+        private static readonly object _operationLock = new object();
+        private static volatile bool _isOperationRunning = false;
 
         // 4. 底部日志与进度区控件
         private readonly Label _lblBottomStatus = new Label();
@@ -297,13 +299,25 @@ namespace CodexPluginSync.Gui
             {
                 StringWriter writer = new StringWriter();
                 string error = null;
+                bool lockTaken = false;
                 try
                 {
+                    // 确保任何正在进行的后台静默检查完全退出后再开始操作，最长等待 5 秒
+                    Monitor.TryEnter(_operationLock, 5000, ref lockTaken);
+                    _isOperationRunning = true;
                     work(writer);
                 }
                 catch (Exception ex)
                 {
                     error = ex.GetType().Name + ": " + ex.Message;
+                }
+                finally
+                {
+                    _isOperationRunning = false;
+                    if (lockTaken)
+                    {
+                        Monitor.Exit(_operationLock);
+                    }
                 }
 
                 string text = writer.ToString();
@@ -947,7 +961,8 @@ namespace CodexPluginSync.Gui
                         if (_timerBgCheck != null) { _timerBgCheck.Stop(); }
                         return;
                     }
-                    _timerBgCheck.Interval = Math.Max(1, currentSettings.AutoCheckHours) * 3600 * 1000;
+                    int safeHours = Math.Min(72, Math.Max(1, currentSettings.AutoCheckHours));
+                    _timerBgCheck.Interval = safeHours * 3600 * 1000;
                 }
 
                 RunSilentBackgroundCheck();
@@ -957,12 +972,18 @@ namespace CodexPluginSync.Gui
 
         private void RunSilentBackgroundCheck()
         {
-            if (_busy) { return; }
+            if (_busy || _isOperationRunning) { return; }
 
             Thread thread = new Thread(delegate()
             {
+                bool lockTaken = false;
                 try
                 {
+                    // 尝试非阻塞获取操作锁，如果用户正在执行操作或界面忙碌，立刻放弃，绝不争抢
+                    Monitor.TryEnter(_operationLock, 0, ref lockTaken);
+                    if (!lockTaken || _busy) { return; }
+                    _isOperationRunning = true;
+
                     Settings settings = Settings.Load(null);
                     CheckOptions options = new CheckOptions();
                     options.CodexHome = CodexPaths.ResolveCodexHome(settings.CodexHome);
@@ -973,10 +994,14 @@ namespace CodexPluginSync.Gui
                     CheckOutcome outcome = engine.Execute();
                     Snapshot snapshot = outcome.Snapshot;
 
+                    // 检查完成后，若在执行期间用户已启动前台操作，则丢弃本次静默检查结果
+                    if (_busy) { return; }
+
                     if (IsHandleCreated && !IsDisposed)
                     {
                         BeginInvoke((MethodInvoker)delegate
                         {
+                            if (_busy) { return; }
                             if (Visible && WindowState != FormWindowState.Minimized)
                             {
                                 UpdateUIFromSnapshot(snapshot, outcome);
@@ -998,6 +1023,14 @@ namespace CodexPluginSync.Gui
                     }
                 }
                 catch (Exception) { }
+                finally
+                {
+                    _isOperationRunning = false;
+                    if (lockTaken)
+                    {
+                        Monitor.Exit(_operationLock);
+                    }
+                }
             });
             thread.IsBackground = true;
             thread.Start();

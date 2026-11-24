@@ -14,7 +14,7 @@ namespace CodexPluginSync.Core
         public string Language = "auto";
         public string Theme = "auto";
         public bool RunAtStartup = false;
-        public int AutoCheckHours = 6;
+        public int AutoCheckHours = 0;
         public int KeepBackups = 1;
         public int StaleStageHours = 24;
         public int KeepLogDays = 30;
@@ -64,7 +64,14 @@ namespace CodexPluginSync.Core
             if (!string.IsNullOrEmpty(dto.Language)) Language = dto.Language;
             if (!string.IsNullOrEmpty(dto.Theme)) Theme = dto.Theme;
             RunAtStartup = dto.RunAtStartup;
-            if (dto.AutoCheckHours > 0) AutoCheckHours = dto.AutoCheckHours;
+            if (dto.AutoCheckHours >= 0 && dto.AutoCheckHours <= 72)
+            {
+                AutoCheckHours = dto.AutoCheckHours;
+            }
+            else
+            {
+                AutoCheckHours = 0; // 超出 0~72 小时安全范围回退为关闭
+            }
             if (dto.KeepBackups >= 0) KeepBackups = dto.KeepBackups;
             if (dto.StaleStageHours > 0) StaleStageHours = dto.StaleStageHours;
             if (dto.KeepLogDays > 0) KeepLogDays = dto.KeepLogDays;

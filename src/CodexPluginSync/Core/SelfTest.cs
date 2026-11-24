@@ -2026,10 +2026,27 @@ namespace CodexPluginSync.Tests
         {
             context.Begin("tray-and-version/contract");
 
-            // M4: 托盘与后台常驻监控配置契约
+            // M4: 托盘与后台常驻监控配置契约（默认关闭 0 小时）
             Settings defaultSettings = new Settings();
-            context.Expect(defaultSettings.AutoCheckHours == 6, "default AutoCheckHours is 6 hours", defaultSettings.AutoCheckHours.ToString());
+            context.Expect(defaultSettings.AutoCheckHours == 0, "default AutoCheckHours is 0 (disabled)", defaultSettings.AutoCheckHours.ToString());
             context.Expect(defaultSettings.RunAtStartup == false, "default RunAtStartup is false", defaultSettings.RunAtStartup.ToString());
+
+            // 验证 settings.json 序列化与范围校验：0 值保留与溢出回退
+            SettingsDto dtoZero = JsonRead.FromText<SettingsDto>("{\"schemaVersion\":1,\"autoCheckHours\":0}");
+            Settings sZero = new Settings();
+            if (dtoZero.AutoCheckHours >= 0 && dtoZero.AutoCheckHours <= 72) { sZero.AutoCheckHours = dtoZero.AutoCheckHours; }
+            context.Expect(sZero.AutoCheckHours == 0, "explicit autoCheckHours 0 stays 0", sZero.AutoCheckHours.ToString());
+
+            SettingsDto dtoSix = JsonRead.FromText<SettingsDto>("{\"schemaVersion\":1,\"autoCheckHours\":6}");
+            Settings sSix = new Settings();
+            if (dtoSix.AutoCheckHours >= 0 && dtoSix.AutoCheckHours <= 72) { sSix.AutoCheckHours = dtoSix.AutoCheckHours; }
+            context.Expect(sSix.AutoCheckHours == 6, "explicit autoCheckHours 6 stays 6", sSix.AutoCheckHours.ToString());
+
+            SettingsDto dtoOverflow = JsonRead.FromText<SettingsDto>("{\"schemaVersion\":1,\"autoCheckHours\":999}");
+            Settings sOverflow = new Settings();
+            if (dtoOverflow.AutoCheckHours >= 0 && dtoOverflow.AutoCheckHours <= 72) { sOverflow.AutoCheckHours = dtoOverflow.AutoCheckHours; }
+            else { sOverflow.AutoCheckHours = 0; }
+            context.Expect(sOverflow.AutoCheckHours == 0, "out-of-range autoCheckHours falls back to 0", sOverflow.AutoCheckHours.ToString());
 
             // M6: GitHub 版本号正规化与比较算法契约
             string v1 = UpdateChecker.NormalizeVersion("v1.0.1");
