@@ -24,7 +24,7 @@ jobs:
           msbuild build/CodexPluginSync.csproj -p:Configuration=Release -nologo -v:m
           msbuild build/CodexPluginSync.Cli.csproj -p:Configuration=Release -nologo -v:m
 
-      - name: Run Core Self-Test Suite (27 Cases)
+      - name: Run Core Self-Test Suite (28 Cases)
         run: |
           .\build\bin\Release\CodexPluginSync.Cli.exe --selftest
 
