@@ -200,6 +200,7 @@ namespace CodexPluginSync.Tests
                 DigestJunctionCase(context, baseDirectory);
                 DiagRedactionCase(context, baseDirectory);
                 ArgumentParsingCase(context);
+                TrayAndVersionContractCase(context);
             }
             finally
             {
@@ -2019,6 +2020,35 @@ namespace CodexPluginSync.Tests
                 bool hasBom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
                 context.Expect(!hasBom, "CLI output first bytes are not UTF-8 BOM EF BB BF", hasBom ? "BOM found" : "clean");
             }
+        }
+
+        private static void TrayAndVersionContractCase(TestContext context)
+        {
+            context.Begin("tray-and-version/contract");
+
+            // M4: 托盘与后台常驻监控配置契约
+            Settings defaultSettings = new Settings();
+            context.Expect(defaultSettings.AutoCheckHours == 6, "default AutoCheckHours is 6 hours", defaultSettings.AutoCheckHours.ToString());
+            context.Expect(defaultSettings.RunAtStartup == false, "default RunAtStartup is false", defaultSettings.RunAtStartup.ToString());
+
+            // M6: GitHub 版本号正规化与比较算法契约
+            string v1 = UpdateChecker.NormalizeVersion("v1.0.1");
+            context.Expect(v1 == "1.0.1", "NormalizeVersion strips leading v", v1 ?? "(null)");
+
+            string v2 = UpdateChecker.NormalizeVersion("1.0.0.0");
+            context.Expect(v2 == "1.0.0", "NormalizeVersion formats to 3 components", v2 ?? "(null)");
+
+            string vInvalid = UpdateChecker.NormalizeVersion("invalid-tag");
+            context.Expect(vInvalid == null, "NormalizeVersion returns null for invalid tag", vInvalid ?? "(null)");
+
+            bool newer1 = UpdateChecker.IsGreater("1.0.1", "1.0.0");
+            context.Expect(newer1, "1.0.1 is greater than 1.0.0", newer1.ToString());
+
+            bool newer2 = UpdateChecker.IsGreater("1.0.0", "1.0.1");
+            context.Expect(!newer2, "1.0.0 is not greater than 1.0.1", newer2.ToString());
+
+            bool newer3 = UpdateChecker.IsGreater("1.0.0", "1.0.0");
+            context.Expect(!newer3, "equal versions are not greater", newer3.ToString());
         }
 
         // -------------------------------------------------------------- helpers

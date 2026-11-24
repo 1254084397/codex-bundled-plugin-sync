@@ -74,7 +74,7 @@ namespace CodexPluginSync.Core
             return (T)new DataContractJsonSerializer(typeof(T)).ReadObject(stream);
         }
 
-        private static string NormalizeVersion(string tag)
+        internal static string NormalizeVersion(string tag)
         {
             if (string.IsNullOrWhiteSpace(tag)) return null;
             string value = tag.Trim();
@@ -83,7 +83,7 @@ namespace CodexPluginSync.Core
             return Version.TryParse(value, out version) ? version.ToString(3) : null;
         }
 
-        private static bool IsGreater(string latest, string current)
+        internal static bool IsGreater(string latest, string current)
         {
             Version latestVersion;
             Version currentVersion;

@@ -28,10 +28,21 @@ namespace CodexPluginSync
             {
                 try
                 {
-                    Application.EnableVisualStyles();
-                    Application.SetCompatibleTextRenderingDefault(false);
-                    Application.Run(new Gui.MainForm());
-                    return Cli.ExitCodes.Ok;
+                    bool isNewInstance;
+                    using (System.Threading.Mutex mutex = new System.Threading.Mutex(true, "Local\\CodexPluginSync.Gui.SingleInstance", out isNewInstance))
+                    {
+                        if (!isNewInstance)
+                        {
+                            MessageBox.Show("Codex 插件同步已在运行中（可查看屏幕右下角系统托盘图标）。",
+                                "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            return Cli.ExitCodes.Ok;
+                        }
+
+                        Application.EnableVisualStyles();
+                        Application.SetCompatibleTextRenderingDefault(false);
+                        Application.Run(new Gui.MainForm());
+                        return Cli.ExitCodes.Ok;
+                    }
                 }
                 catch (Exception ex)
                 {

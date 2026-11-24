@@ -39,6 +39,15 @@ namespace CodexPluginSync.Gui
         private readonly Button _btnOpenHome = new Button();
         private readonly Button _btnCancel = new Button();
         private readonly Button _btnCheckUpdates = new Button();
+        private readonly Button _btnDownloadUpdate = new Button();
+
+        // 5. 托盘与后台常驻监控控件 (M4)
+        private NotifyIcon _notifyIcon;
+        private ContextMenuStrip _trayMenu;
+        private System.Windows.Forms.Timer _timerBgCheck;
+        private bool _reallyExit = false;
+        private bool _hasShownTrayBalloon = false;
+        private bool _isFirstBgTick = true;
 
         // 4. 底部日志与进度区控件
         private readonly Label _lblBottomStatus = new Label();
@@ -162,7 +171,24 @@ namespace CodexPluginSync.Gui
             ConfigureButton(_btnDiag, "导出诊断包", delegate { RunDiag(); });
             ConfigureButton(_btnOpenLogs, "打开日志", delegate { OpenFolder(CodexPaths.ToolLogDirectory); });
             ConfigureButton(_btnOpenHome, "打开 CodexHome", delegate { OpenFolder(_codexHome); });
-            ConfigureButton(_btnCheckUpdates, "检查更新", delegate { RefreshUpdateStatus(); });
+            ConfigureButton(_btnCheckUpdates, "检查更新", delegate { RefreshUpdateStatus(true); });
+            ConfigureButton(_btnDownloadUpdate, "下载新版本", delegate
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo(!string.IsNullOrEmpty(_latestReleaseUrl) ? _latestReleaseUrl : UpdateChecker.RepositoryUrl + "/releases/latest")
+                    {
+                        UseShellExecute = true
+                    });
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "无法打开下载页面：" + ex.Message, "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            });
+            _btnDownloadUpdate.Visible = false;
+            _btnDownloadUpdate.ForeColor = Color.DarkGreen;
+            _btnDownloadUpdate.Font = new Font(Font, FontStyle.Bold);
 
             _btnCancel.Text = "取消同步";
             _btnCancel.AutoSize = true;
@@ -188,6 +214,7 @@ namespace CodexPluginSync.Gui
             actionPanel.Controls.Add(_btnOpenLogs);
             actionPanel.Controls.Add(_btnOpenHome);
             actionPanel.Controls.Add(_btnCheckUpdates);
+            actionPanel.Controls.Add(_btnDownloadUpdate);
             actionPanel.Controls.Add(_btnCancel);
 
             root.Controls.Add(actionPanel, 0, 2);
@@ -224,10 +251,12 @@ namespace CodexPluginSync.Gui
             bottomBar.Controls.Add(_progressBar, 1, 0);
             root.Controls.Add(bottomBar, 0, 4);
 
+            InitializeTray();
+
             Shown += delegate
             {
                 RefreshStatus();
-                RefreshUpdateStatus();
+                RefreshUpdateStatus(false);
             };
         }
 
@@ -326,13 +355,19 @@ namespace CodexPluginSync.Gui
             _btnOpenLogs.Enabled = enabled;
             _btnOpenHome.Enabled = enabled;
             _btnCheckUpdates.Enabled = enabled;
+            _btnDownloadUpdate.Enabled = enabled;
             Cursor = enabled ? Cursors.Default : Cursors.WaitCursor;
         }
 
-        private void RefreshUpdateStatus()
+        private void RefreshUpdateStatus(bool fromUserClick = false)
         {
             _lnkUpdateStatus.Text = "正在检查 GitHub Releases 版本…";
             _lnkUpdateStatus.LinkColor = SystemColors.GrayText;
+            if (fromUserClick)
+            {
+                AppendLog("正在检查 GitHub Releases 最新版本…");
+                _lblBottomStatus.Text = "当前阶段：正在检查 GitHub Releases 版本…";
+            }
             Thread thread = new Thread(delegate()
             {
                 UpdateInfo update = UpdateChecker.Check(Cli.CliRunner.ToolVersion);
@@ -350,16 +385,38 @@ namespace CodexPluginSync.Gui
                             {
                                 _lnkUpdateStatus.Text = (update.Message ?? "暂无已发布的 Release 版本") + " · 点击访问 Releases";
                                 _lnkUpdateStatus.LinkColor = SystemColors.HotTrack;
+                                _lnkUpdateStatus.Font = new Font(Font, FontStyle.Regular);
+                                _btnDownloadUpdate.Visible = false;
+                                if (fromUserClick)
+                                {
+                                    AppendLog("【版本检测】暂时无法连接至 GitHub Releases（" + (update.Message ?? "网络或服务异常") + "），已保持本地离线运行。");
+                                    _lblBottomStatus.Text = "当前阶段：就绪（离线模式）";
+                                }
                             }
                             else if (update.IsNewer)
                             {
-                                _lnkUpdateStatus.Text = "发现新版本 " + update.LatestVersion + "（当前 " + update.CurrentVersion + "）· 点击前往 GitHub Releases 查看更新";
+                                _lnkUpdateStatus.Text = "🎉 发现新版本 " + update.LatestVersion + "（当前 " + update.CurrentVersion + "）· 点击前往 GitHub Releases 查看更新";
                                 _lnkUpdateStatus.LinkColor = Color.DarkOrange;
+                                _lnkUpdateStatus.Font = new Font(Font, FontStyle.Bold);
+                                _btnDownloadUpdate.Text = "下载新版本 (" + update.LatestVersion + ")";
+                                _btnDownloadUpdate.Visible = true;
+                                if (fromUserClick)
+                                {
+                                    AppendLog("【版本检测】🎉 发现新版本 v" + update.LatestVersion + "（当前 v" + update.CurrentVersion + "）。发布地址：" + update.ReleaseUrl);
+                                    _lblBottomStatus.Text = "当前阶段：发现新版本 " + update.LatestVersion;
+                                }
                             }
                             else
                             {
                                 _lnkUpdateStatus.Text = "当前版本 " + update.CurrentVersion + " 已是最新 · 点击访问 Releases";
                                 _lnkUpdateStatus.LinkColor = Color.DarkGreen;
+                                _lnkUpdateStatus.Font = new Font(Font, FontStyle.Regular);
+                                _btnDownloadUpdate.Visible = false;
+                                if (fromUserClick)
+                                {
+                                    AppendLog("【版本检测】当前版本 v" + update.CurrentVersion + " 已是最新发布版本。");
+                                    _lblBottomStatus.Text = "当前阶段：版本检查完成（当前已是最新）";
+                                }
                             }
                         });
                     }
@@ -789,6 +846,218 @@ namespace CodexPluginSync.Gui
             {
                 MessageBox.Show(this, ex.Message, "无法打开目录", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
+        }
+
+        // ==================== 5. 托盘常驻与后台静默检查 (M4) ====================
+        private void InitializeTray()
+        {
+            _notifyIcon = new NotifyIcon();
+            try
+            {
+                _notifyIcon.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+            }
+            catch (Exception)
+            {
+                _notifyIcon.Icon = SystemIcons.Application;
+            }
+            this.Icon = _notifyIcon.Icon;
+            _notifyIcon.Text = "Codex 插件同步 " + Cli.CliRunner.ToolVersion;
+
+            _trayMenu = new ContextMenuStrip();
+            _trayMenu.Font = new Font("Microsoft YaHei UI", 9f);
+            _trayMenu.Items.Add("打开主窗口", null, delegate { RestoreFromTray(); });
+            _trayMenu.Items.Add("立即检查", null, delegate { RestoreFromTray(); RunCheck(); });
+            _trayMenu.Items.Add("立即同步", null, delegate { RestoreFromTray(); RunWithConfirm("同步会先自动创建备份，并将内置插件原子写入本地目录。\n继续执行？", RunSync); });
+            _trayMenu.Items.Add(new ToolStripSeparator());
+            _trayMenu.Items.Add("访问 GitHub 主页", null, delegate
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo(UpdateChecker.RepositoryUrl) { UseShellExecute = true });
+                }
+                catch (Exception) { }
+            });
+            _trayMenu.Items.Add("退出", null, delegate
+            {
+                _reallyExit = true;
+                Close();
+            });
+
+            _notifyIcon.ContextMenuStrip = _trayMenu;
+            _notifyIcon.Visible = true;
+
+            _notifyIcon.DoubleClick += delegate { RestoreFromTray(); };
+            _notifyIcon.BalloonTipClicked += delegate
+            {
+                RestoreFromTray();
+                RefreshStatus();
+            };
+
+            Resize += delegate
+            {
+                if (WindowState == FormWindowState.Minimized)
+                {
+                    HideToTray();
+                }
+            };
+
+            StartBackgroundTimer();
+        }
+
+        private void HideToTray()
+        {
+            Hide();
+            ShowInTaskbar = false;
+            if (!_hasShownTrayBalloon)
+            {
+                _hasShownTrayBalloon = true;
+                try
+                {
+                    _notifyIcon.ShowBalloonTip(3000, "Codex 插件同步",
+                        "程序已最小化到系统托盘，将在后台定期检查插件更新。\n右键托盘图标可退出程序。", ToolTipIcon.Info);
+                }
+                catch (Exception) { }
+            }
+        }
+
+        private void RestoreFromTray()
+        {
+            Show();
+            WindowState = FormWindowState.Normal;
+            ShowInTaskbar = true;
+            BringToFront();
+            Activate();
+        }
+
+        private void StartBackgroundTimer()
+        {
+            Settings s = Settings.Load(null);
+            if (s.AutoCheckHours <= 0) { return; }
+
+            _timerBgCheck = new System.Windows.Forms.Timer();
+            _timerBgCheck.Interval = 2 * 60 * 1000; // 启动后延迟 2 分钟首检 (§12 M4)
+            _timerBgCheck.Tick += delegate
+            {
+                if (_isFirstBgTick)
+                {
+                    _isFirstBgTick = false;
+                    Settings currentSettings = Settings.Load(null);
+                    if (currentSettings.AutoCheckHours <= 0)
+                    {
+                        if (_timerBgCheck != null) { _timerBgCheck.Stop(); }
+                        return;
+                    }
+                    _timerBgCheck.Interval = Math.Max(1, currentSettings.AutoCheckHours) * 3600 * 1000;
+                }
+
+                RunSilentBackgroundCheck();
+            };
+            _timerBgCheck.Start();
+        }
+
+        private void RunSilentBackgroundCheck()
+        {
+            if (_busy) { return; }
+
+            Thread thread = new Thread(delegate()
+            {
+                try
+                {
+                    Settings settings = Settings.Load(null);
+                    CheckOptions options = new CheckOptions();
+                    options.CodexHome = CodexPaths.ResolveCodexHome(settings.CodexHome);
+                    options.MinimumFreeGB = settings.MinimumFreeGB;
+                    options.ExtraLockingProcesses = settings.ExtraLockingProcesses;
+
+                    CheckEngine engine = new CheckEngine(options, null);
+                    CheckOutcome outcome = engine.Execute();
+                    Snapshot snapshot = outcome.Snapshot;
+
+                    if (IsHandleCreated && !IsDisposed)
+                    {
+                        BeginInvoke((MethodInvoker)delegate
+                        {
+                            if (Visible && WindowState != FormWindowState.Minimized)
+                            {
+                                UpdateUIFromSnapshot(snapshot, outcome);
+                            }
+                            else
+                            {
+                                if (_notifyIcon != null && snapshot != null && snapshot.Verdict == Verdicts.UpdateNeeded)
+                                {
+                                    try
+                                    {
+                                        _notifyIcon.ShowBalloonTip(6000, "Codex 插件更新提示",
+                                            "检测到 Codex Desktop 内置插件有新版本可用，点击打开主界面进行同步。",
+                                            ToolTipIcon.Info);
+                                    }
+                                    catch (Exception) { }
+                                }
+                            }
+                        });
+                    }
+                }
+                catch (Exception) { }
+            });
+            thread.IsBackground = true;
+            thread.Start();
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (e.CloseReason == CloseReason.UserClosing && !_reallyExit)
+            {
+                e.Cancel = true;
+                HideToTray();
+                return;
+            }
+
+            if (_timerBgCheck != null)
+            {
+                _timerBgCheck.Stop();
+                _timerBgCheck.Dispose();
+                _timerBgCheck = null;
+            }
+
+            if (_notifyIcon != null)
+            {
+                _notifyIcon.Visible = false;
+                _notifyIcon.Dispose();
+                _notifyIcon = null;
+            }
+
+            if (_trayMenu != null)
+            {
+                _trayMenu.Dispose();
+                _trayMenu = null;
+            }
+
+            base.OnFormClosing(e);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                if (_timerBgCheck != null)
+                {
+                    _timerBgCheck.Stop();
+                    _timerBgCheck.Dispose();
+                    _timerBgCheck = null;
+                }
+                if (_notifyIcon != null)
+                {
+                    _notifyIcon.Visible = false;
+                    _notifyIcon.Dispose();
+                    _notifyIcon = null;
+                }
+                if (_trayMenu != null)
+                {
+                    _trayMenu.Dispose();
+                    _trayMenu = null;
+                }
+            }
+            base.Dispose(disposing);
         }
     }
 }

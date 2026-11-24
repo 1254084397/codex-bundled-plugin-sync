@@ -34,6 +34,7 @@
 | 🔍 **SHA-256 Digest Verification** | Verifies copied trees against expected digests before any live directory swap occurs. |
 | 🌐 **Chrome Native-Host Repair** | Resolves Chrome extension native messaging host drift automatically so browser automation never breaks. |
 | ↩️ **One-Click Component Rollback** | Granular component snapshot backups. Roll back easily from GUI or CLI without wiping unrelated plugins. |
+| 🔔 **Tray & Background Monitor** | System tray minimization (`NotifyIcon`), periodic background silent checks, and non-blocking update notifications. |
 
 ```mermaid
 flowchart TD
