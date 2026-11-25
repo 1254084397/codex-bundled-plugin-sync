@@ -29,7 +29,7 @@ try {
     if (-not (Test-Path -LiteralPath $cliExe)) { throw "找不到产物：$cliExe" }
 
     $version = (Get-Item -LiteralPath $exe).VersionInfo.FileVersion
-    if ([string]::IsNullOrWhiteSpace($version)) { $version = '1.0.1.0' }
+    if ([string]::IsNullOrWhiteSpace($version)) { $version = '1.0.2.0' }
 
     Write-Host '== 自检（必须 28 项全绿，否则不打包）=='
     & $cliExe --selftest | Out-Host

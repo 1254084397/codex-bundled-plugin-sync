@@ -74,12 +74,10 @@ namespace CodexPluginSync.Gui
             TableLayoutPanel root = new TableLayoutPanel();
             root.Dock = DockStyle.Fill;
             root.ColumnCount = 1;
-            root.RowCount = 5;
+            root.RowCount = 3;
             root.Padding = new Padding(12);
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));             // 顶部状态区
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 150f));        // 组件状态表格
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));             // 主操作按钮区
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));        // 日志文本区
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));        // 可拖拽上下分割区（组件表 / 操作与日志）
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));             // 底部进度与状态条
             Controls.Add(root);
 
@@ -143,7 +141,30 @@ namespace CodexPluginSync.Gui
             grpTopStatus.Controls.Add(topGrid);
             root.Controls.Add(grpTopStatus, 0, 0);
 
-            // ==================== 2. 组件状态区 ====================
+            // ==================== 2. 可拖拽上下分割区 ====================
+            SplitContainer splitMain = new SplitContainer();
+            splitMain.Dock = DockStyle.Fill;
+            splitMain.Orientation = Orientation.Horizontal;
+            splitMain.SplitterWidth = 7;
+            splitMain.BackColor = Color.FromArgb(228, 232, 238);
+            splitMain.Panel1.BackColor = SystemColors.Control;
+            splitMain.Panel2.BackColor = SystemColors.Control;
+            splitMain.Panel1MinSize = 80;
+            splitMain.Panel2MinSize = 150;
+            splitMain.FixedPanel = FixedPanel.Panel1;
+            splitMain.TabStop = false;
+            splitMain.Margin = new Padding(0, 0, 0, 6);
+            splitMain.Paint += delegate(object sender, PaintEventArgs e)
+            {
+                int y = splitMain.SplitterDistance + splitMain.SplitterWidth / 2;
+                int centerX = splitMain.Width / 2;
+                using (Pen gripPen = new Pen(Color.FromArgb(150, 160, 172), 2f))
+                {
+                    e.Graphics.DrawLine(gripPen, centerX - 24, y, centerX + 24, y);
+                }
+            };
+
+            // 组件状态区（上方面板）
             _listComponents.Dock = DockStyle.Fill;
             _listComponents.View = View.Details;
             _listComponents.FullRowSelect = true;
@@ -156,20 +177,30 @@ namespace CodexPluginSync.Gui
             _listComponents.Columns.Add("本地状态", 130);
             _listComponents.Columns.Add("判定", 90);
             _listComponents.Columns.Add("详细说明", 300);
-            _listComponents.Margin = new Padding(0, 0, 0, 8);
-            root.Controls.Add(_listComponents, 0, 1);
+            _listComponents.Margin = new Padding(0);
+            splitMain.Panel1.Controls.Add(_listComponents);
+
+            // 下方面板：主操作区 + 日志输出区
+            TableLayoutPanel lowerPanel = new TableLayoutPanel();
+            lowerPanel.Dock = DockStyle.Fill;
+            lowerPanel.ColumnCount = 1;
+            lowerPanel.RowCount = 2;
+            lowerPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            lowerPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            lowerPanel.Margin = new Padding(0);
+            lowerPanel.Padding = new Padding(0, 4, 0, 0);
 
             // ==================== 3. 主操作区 ====================
             FlowLayoutPanel actionPanel = new FlowLayoutPanel();
             actionPanel.Dock = DockStyle.Fill;
             actionPanel.AutoSize = true;
             actionPanel.WrapContents = true;
-            actionPanel.Margin = new Padding(0, 0, 0, 8);
+            actionPanel.Margin = new Padding(0, 0, 0, 6);
 
             ConfigureButton(_btnCheck, "检查状态", delegate { RunCheck(); });
             ConfigureButton(_btnSync, "立即同步", delegate { RunWithConfirm("同步会先自动创建备份，并将内置插件原子写入本地目录。\n继续执行？", RunSync); });
             ConfigureButton(_btnRollback, "回滚备份…", delegate { RunRollback(); });
-            ConfigureButton(_btnCleanup, "清理旧备份", delegate { RunWithConfirm("清理会删除过期的 stage 暂存、过期备份与旧日志（活跃操作引用的内容会被保留）。\n继续执行？", RunCleanup); });
+            ConfigureButton(_btnCleanup, "清理旧备份", delegate { RunWithConfirm("清理会删除超出保留策略的旧备份、过期 stage 暂存与旧日志。\n\n注意：为保证随时可回滚，默认会保留最新 1 份完整备份（及最新 1 份回滚安全快照），不会全部清空。\n继续执行？", RunCleanup); });
             ConfigureButton(_btnDiag, "导出诊断包", delegate { RunDiag(); });
             ConfigureButton(_btnOpenLogs, "打开日志", delegate { OpenFolder(CodexPaths.ToolLogDirectory); });
             ConfigureButton(_btnOpenHome, "打开 CodexHome", delegate { OpenFolder(_codexHome); });
@@ -219,7 +250,7 @@ namespace CodexPluginSync.Gui
             actionPanel.Controls.Add(_btnDownloadUpdate);
             actionPanel.Controls.Add(_btnCancel);
 
-            root.Controls.Add(actionPanel, 0, 2);
+            lowerPanel.Controls.Add(actionPanel, 0, 0);
 
             // ==================== 4. 底部日志与状态区 ====================
             _txtLog.Multiline = true;
@@ -228,8 +259,11 @@ namespace CodexPluginSync.Gui
             _txtLog.Dock = DockStyle.Fill;
             _txtLog.BackColor = Color.FromArgb(250, 250, 250);
             _txtLog.Font = new Font("Consolas", 9f);
-            _txtLog.Margin = new Padding(0, 0, 0, 6);
-            root.Controls.Add(_txtLog, 0, 3);
+            _txtLog.Margin = new Padding(0, 0, 0, 4);
+            lowerPanel.Controls.Add(_txtLog, 0, 1);
+
+            splitMain.Panel2.Controls.Add(lowerPanel);
+            root.Controls.Add(splitMain, 0, 1);
 
             TableLayoutPanel bottomBar = new TableLayoutPanel();
             bottomBar.Dock = DockStyle.Fill;
@@ -251,12 +285,21 @@ namespace CodexPluginSync.Gui
 
             bottomBar.Controls.Add(_lblBottomStatus, 0, 0);
             bottomBar.Controls.Add(_progressBar, 1, 0);
-            root.Controls.Add(bottomBar, 0, 4);
+            root.Controls.Add(bottomBar, 0, 2);
 
             InitializeTray();
 
             Shown += delegate
             {
+                try
+                {
+                    int maxDist = splitMain.Height - splitMain.Panel2MinSize - splitMain.SplitterWidth;
+                    if (maxDist >= splitMain.Panel1MinSize)
+                    {
+                        splitMain.SplitterDistance = Math.Max(splitMain.Panel1MinSize, Math.Min(165, maxDist));
+                    }
+                }
+                catch (Exception) { }
                 RefreshStatus();
                 RefreshUpdateStatus(false);
             };
@@ -823,12 +866,14 @@ namespace CodexPluginSync.Gui
         {
             RunAsync("正在清理旧备份与暂存目录…", delegate(TextWriter writer)
             {
+                Settings settings = Settings.Load(null);
                 CleanupOptions options = new CleanupOptions();
                 options.CodexHome = _codexHome;
                 options.Out = writer;
                 options.Err = writer;
                 SyncRunResult result = CleanupEngine.Run(options);
                 writer.WriteLine("清理结果：" + (result.Status ?? "(未知)") + "｜退出码 " + result.ExitCode);
+                writer.WriteLine("说明：为保障随时可回滚，系统默认保留最新 " + settings.KeepBackups + " 份完整备份（以及最新 1 份回滚安全快照）；只清理超出保留上限的旧备份与过期暂存。");
             });
         }
 

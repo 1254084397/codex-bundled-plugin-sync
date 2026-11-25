@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.2 - 2026-11-25
+
+### Improved
+
+- **Resizable Split Layout (`SplitContainer`)**: Replaced the fixed-height component table layout in the WinForms GUI with a horizontal `SplitContainer` featuring a centered drag grip handle, allowing users to freely drag and resize the upper component list and lower log/action areas with the mouse.
+- **Clearer Backup Cleanup Prompts**: Clarified both the cleanup confirmation dialog and log output to explicitly explain that the retention policy preserves the newest 1 complete backup (`keepBackups = 1`) and newest 1 `rollback-safety` snapshot by default so rollback remains available.
+
 ## 1.0.1 - 2026-11-25
 
 ### Added
